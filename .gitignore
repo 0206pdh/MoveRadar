@@ -1,0 +1,14 @@
+# 데이터 파일
+*.csv
+SHOW_SCHEMAS
+
+# 임시/작업 파일
+Untitled*
+database_check.csv
+
+# 3-Resources 내 민감 데이터
+3-Resources/
+
+# OS
+.DS_Store
+Thumbs.db
