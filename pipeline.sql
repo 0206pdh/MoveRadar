@@ -65,9 +65,54 @@ GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 20;
 SELECT * FROM SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V09_MONTHLY_CALL_STATS
 ORDER BY YEAR_MONTH DESC LIMIT 10;
 
+-- 0-10. TMAP 서울 교통량 날짜 범위 + 커버리지 확인
+-- ⚠️ DATA_DATE 범위가 18개월 미만이면 STEP 1-7/1-8/3-4/4-4 건너뛰고 TMAP을 LLM 컨텍스트 전용으로 사용
+SELECT
+    COUNT(*)           AS total_rows,
+    MIN(DATA_DATE)     AS min_dt,
+    MAX(DATA_DATE)     AS max_dt,
+    DATEDIFF('MONTH', MIN(DATA_DATE), MAX(DATA_DATE)) AS months_available
+FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME;
+
+-- 서울 도로명 패턴 커버리지 확인
+SELECT
+    CASE
+        WHEN ROAD_NAME LIKE '%강남%' OR ST_NODE_NAME LIKE '%강남%' OR ED_NODE_NAME LIKE '%강남%' THEN '강남구'
+        WHEN ROAD_NAME LIKE '%서초%' OR ST_NODE_NAME LIKE '%서초%' OR ED_NODE_NAME LIKE '%서초%' THEN '서초구'
+        WHEN ROAD_NAME LIKE '%영등포%' OR ST_NODE_NAME LIKE '%영등포%' OR ED_NODE_NAME LIKE '%영등포%' THEN '영등포구'
+        WHEN ROAD_NAME LIKE '%마포%' OR ST_NODE_NAME LIKE '%마포%' OR ED_NODE_NAME LIKE '%마포%' THEN '마포구'
+        WHEN ROAD_NAME LIKE '%종로%' OR ST_NODE_NAME LIKE '%종로%' OR ED_NODE_NAME LIKE '%종로%' THEN '종로구'
+        WHEN ROAD_NAME LIKE '%중랑%' OR ST_NODE_NAME LIKE '%중랑%' OR ED_NODE_NAME LIKE '%중랑%' THEN '중랑구'
+        WHEN ROAD_NAME LIKE '%중구%' OR ST_NODE_NAME LIKE '%중구%' OR ED_NODE_NAME LIKE '%중구%' THEN '중구'
+        WHEN ROAD_NAME LIKE '%송파%' OR ST_NODE_NAME LIKE '%송파%' OR ED_NODE_NAME LIKE '%송파%' THEN '송파구'
+        WHEN ROAD_NAME LIKE '%강동%' OR ST_NODE_NAME LIKE '%강동%' OR ED_NODE_NAME LIKE '%강동%' THEN '강동구'
+        WHEN ROAD_NAME LIKE '%강서%' OR ST_NODE_NAME LIKE '%강서%' OR ED_NODE_NAME LIKE '%강서%' THEN '강서구'
+        WHEN ROAD_NAME LIKE '%강북%' OR ST_NODE_NAME LIKE '%강북%' OR ED_NODE_NAME LIKE '%강북%' THEN '강북구'
+        WHEN ROAD_NAME LIKE '%노원%' OR ST_NODE_NAME LIKE '%노원%' OR ED_NODE_NAME LIKE '%노원%' THEN '노원구'
+        WHEN ROAD_NAME LIKE '%도봉%' OR ST_NODE_NAME LIKE '%도봉%' OR ED_NODE_NAME LIKE '%도봉%' THEN '도봉구'
+        WHEN ROAD_NAME LIKE '%성북%' OR ST_NODE_NAME LIKE '%성북%' OR ED_NODE_NAME LIKE '%성북%' THEN '성북구'
+        WHEN ROAD_NAME LIKE '%동대문%' OR ST_NODE_NAME LIKE '%동대문%' OR ED_NODE_NAME LIKE '%동대문%' THEN '동대문구'
+        WHEN ROAD_NAME LIKE '%광진%' OR ST_NODE_NAME LIKE '%광진%' OR ED_NODE_NAME LIKE '%광진%' THEN '광진구'
+        WHEN ROAD_NAME LIKE '%성동%' OR ST_NODE_NAME LIKE '%성동%' OR ED_NODE_NAME LIKE '%성동%' THEN '성동구'
+        WHEN ROAD_NAME LIKE '%용산%' OR ST_NODE_NAME LIKE '%용산%' OR ED_NODE_NAME LIKE '%용산%' THEN '용산구'
+        WHEN ROAD_NAME LIKE '%은평%' OR ST_NODE_NAME LIKE '%은평%' OR ED_NODE_NAME LIKE '%은평%' THEN '은평구'
+        WHEN ROAD_NAME LIKE '%서대문%' OR ST_NODE_NAME LIKE '%서대문%' OR ED_NODE_NAME LIKE '%서대문%' THEN '서대문구'
+        WHEN ROAD_NAME LIKE '%동작%' OR ST_NODE_NAME LIKE '%동작%' OR ED_NODE_NAME LIKE '%동작%' THEN '동작구'
+        WHEN ROAD_NAME LIKE '%관악%' OR ST_NODE_NAME LIKE '%관악%' OR ED_NODE_NAME LIKE '%관악%' THEN '관악구'
+        WHEN ROAD_NAME LIKE '%금천%' OR ST_NODE_NAME LIKE '%금천%' OR ED_NODE_NAME LIKE '%금천%' THEN '금천구'
+        WHEN ROAD_NAME LIKE '%구로%' OR ST_NODE_NAME LIKE '%구로%' OR ED_NODE_NAME LIKE '%구로%' THEN '구로구'
+        WHEN ROAD_NAME LIKE '%양천%' OR ST_NODE_NAME LIKE '%양천%' OR ED_NODE_NAME LIKE '%양천%' THEN '양천구'
+        ELSE NULL
+    END AS SGG,
+    COUNT(*) AS row_cnt
+FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME
+GROUP BY 1
+HAVING SGG IS NOT NULL
+ORDER BY 2 DESC;
+
 
 -- ============================================================
--- STEP 1: 전처리 테이블 6개 생성
+-- STEP 1: 전처리 테이블 8개 생성
 -- 기존 4개 (시세/전입인구 훈련/탐지) + 통신 개통 2개
 -- ============================================================
 USE DATABASE MOVERADAR;
@@ -96,7 +141,8 @@ SELECT
 FROM KOREA_REAL_ESTATE_APARTMENT_MARKET_INTELLIGENCE.HACKATHON_2026.REGION_APT_RICHGO_MARKET_PRICE_M_H
 WHERE REGION_LEVEL = 'emd'
   AND SD = '서울'
-  AND YYYYMMDD::DATE >= '2024-01-01'
+  AND YYYYMMDD::DATE >= '2023-01-01'
+  -- ⚠️ 서울 25개 구 중 2024 데이터 없는 구는 2023 데이터로 탐지됨 (정상)
 GROUP BY 1, 2, 3;
 
 -- 1-3. 전입인구 훈련 테이블 (SGG 단위, 2021~2023)
@@ -122,7 +168,8 @@ FROM KOREA_REAL_ESTATE_APARTMENT_MARKET_INTELLIGENCE.HACKATHON_2026.REGION_POPUL
 WHERE MOVEMENT_TYPE = '전입'
   AND REGION_LEVEL = 'sgg'
   AND SD = '서울'
-  AND YYYYMMDD >= '2024-01-01'
+  AND YYYYMMDD >= '2023-01-01'
+  -- ⚠️ 22개 구는 2023 데이터로, 3개 구는 2023+2024 데이터로 탐지됨 (정상)
 GROUP BY 1, 2;
 
 -- 1-5. 통신 개통 훈련 테이블 (아정네트웍스 V01, SGG 단위, ~2023)
@@ -147,8 +194,99 @@ SELECT
     SUM(OPEN_COUNT)                        AS TELECOM_OPEN_COUNT
 FROM SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V01_MONTHLY_REGIONAL_CONTRACT_STATS
 WHERE INSTALL_STATE = '서울'
-  AND YEAR_MONTH >= '2024-01-01'
+  AND YEAR_MONTH >= '2023-01-01'
+  -- ⚠️ 통신 데이터는 25개 구 모두 2023+ 존재 (V01 기준)
 GROUP BY 1, 2;
+
+-- 1-7. TMAP 교통량 훈련 (서울 간선도로 기반 SGG 집계, 탐지 기간 6개월 전까지)
+-- SUM_PROBE_COUNT = 해당 도로 구간 TMAP 실사용자 차량 수 (이동량 프록시)
+-- ⚠️ STEP 0-10 결과 18개월 미만이면 이 스텝 건너뜀
+CREATE OR REPLACE TABLE tmap_timeseries_train AS
+WITH sgg_extract AS (
+    SELECT
+        DATE_TRUNC('MONTH', DATA_DATE)::DATE  AS TS,
+        CASE
+            WHEN ROAD_NAME LIKE '%강남%' OR ST_NODE_NAME LIKE '%강남%' OR ED_NODE_NAME LIKE '%강남%' THEN '강남구'
+            WHEN ROAD_NAME LIKE '%서초%' OR ST_NODE_NAME LIKE '%서초%' OR ED_NODE_NAME LIKE '%서초%' THEN '서초구'
+            WHEN ROAD_NAME LIKE '%영등포%' OR ST_NODE_NAME LIKE '%영등포%' OR ED_NODE_NAME LIKE '%영등포%' THEN '영등포구'
+            WHEN ROAD_NAME LIKE '%마포%' OR ST_NODE_NAME LIKE '%마포%' OR ED_NODE_NAME LIKE '%마포%' THEN '마포구'
+            WHEN ROAD_NAME LIKE '%종로%' OR ST_NODE_NAME LIKE '%종로%' OR ED_NODE_NAME LIKE '%종로%' THEN '종로구'
+            WHEN ROAD_NAME LIKE '%중랑%' OR ST_NODE_NAME LIKE '%중랑%' OR ED_NODE_NAME LIKE '%중랑%' THEN '중랑구'
+            WHEN ROAD_NAME LIKE '%중구%' OR ST_NODE_NAME LIKE '%중구%' OR ED_NODE_NAME LIKE '%중구%' THEN '중구'
+            WHEN ROAD_NAME LIKE '%송파%' OR ST_NODE_NAME LIKE '%송파%' OR ED_NODE_NAME LIKE '%송파%' THEN '송파구'
+            WHEN ROAD_NAME LIKE '%강동%' OR ST_NODE_NAME LIKE '%강동%' OR ED_NODE_NAME LIKE '%강동%' THEN '강동구'
+            WHEN ROAD_NAME LIKE '%강서%' OR ST_NODE_NAME LIKE '%강서%' OR ED_NODE_NAME LIKE '%강서%' THEN '강서구'
+            WHEN ROAD_NAME LIKE '%강북%' OR ST_NODE_NAME LIKE '%강북%' OR ED_NODE_NAME LIKE '%강북%' THEN '강북구'
+            WHEN ROAD_NAME LIKE '%노원%' OR ST_NODE_NAME LIKE '%노원%' OR ED_NODE_NAME LIKE '%노원%' THEN '노원구'
+            WHEN ROAD_NAME LIKE '%도봉%' OR ST_NODE_NAME LIKE '%도봉%' OR ED_NODE_NAME LIKE '%도봉%' THEN '도봉구'
+            WHEN ROAD_NAME LIKE '%성북%' OR ST_NODE_NAME LIKE '%성북%' OR ED_NODE_NAME LIKE '%성북%' THEN '성북구'
+            WHEN ROAD_NAME LIKE '%동대문%' OR ST_NODE_NAME LIKE '%동대문%' OR ED_NODE_NAME LIKE '%동대문%' THEN '동대문구'
+            WHEN ROAD_NAME LIKE '%광진%' OR ST_NODE_NAME LIKE '%광진%' OR ED_NODE_NAME LIKE '%광진%' THEN '광진구'
+            WHEN ROAD_NAME LIKE '%성동%' OR ST_NODE_NAME LIKE '%성동%' OR ED_NODE_NAME LIKE '%성동%' THEN '성동구'
+            WHEN ROAD_NAME LIKE '%용산%' OR ST_NODE_NAME LIKE '%용산%' OR ED_NODE_NAME LIKE '%용산%' THEN '용산구'
+            WHEN ROAD_NAME LIKE '%은평%' OR ST_NODE_NAME LIKE '%은평%' OR ED_NODE_NAME LIKE '%은평%' THEN '은평구'
+            WHEN ROAD_NAME LIKE '%서대문%' OR ST_NODE_NAME LIKE '%서대문%' OR ED_NODE_NAME LIKE '%서대문%' THEN '서대문구'
+            WHEN ROAD_NAME LIKE '%동작%' OR ST_NODE_NAME LIKE '%동작%' OR ED_NODE_NAME LIKE '%동작%' THEN '동작구'
+            WHEN ROAD_NAME LIKE '%관악%' OR ST_NODE_NAME LIKE '%관악%' OR ED_NODE_NAME LIKE '%관악%' THEN '관악구'
+            WHEN ROAD_NAME LIKE '%금천%' OR ST_NODE_NAME LIKE '%금천%' OR ED_NODE_NAME LIKE '%금천%' THEN '금천구'
+            WHEN ROAD_NAME LIKE '%구로%' OR ST_NODE_NAME LIKE '%구로%' OR ED_NODE_NAME LIKE '%구로%' THEN '구로구'
+            WHEN ROAD_NAME LIKE '%양천%' OR ST_NODE_NAME LIKE '%양천%' OR ED_NODE_NAME LIKE '%양천%' THEN '양천구'
+            ELSE NULL
+        END AS REGION_KEY,
+        SUM(SUM_PROBE_COUNT)                  AS TMAP_VOLUME
+    FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME
+    GROUP BY 1, 2
+)
+SELECT TS, REGION_KEY, TMAP_VOLUME
+FROM sgg_extract
+WHERE REGION_KEY IS NOT NULL
+  AND TS < DATEADD('MONTH', -6,
+        (SELECT MAX(DATE_TRUNC('MONTH', DATA_DATE)::DATE)
+         FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME));
+
+-- 1-8. TMAP 교통량 탐지 (최신 6개월)
+CREATE OR REPLACE TABLE tmap_timeseries_detect AS
+WITH sgg_extract AS (
+    SELECT
+        DATE_TRUNC('MONTH', DATA_DATE)::DATE  AS TS,
+        CASE
+            WHEN ROAD_NAME LIKE '%강남%' OR ST_NODE_NAME LIKE '%강남%' OR ED_NODE_NAME LIKE '%강남%' THEN '강남구'
+            WHEN ROAD_NAME LIKE '%서초%' OR ST_NODE_NAME LIKE '%서초%' OR ED_NODE_NAME LIKE '%서초%' THEN '서초구'
+            WHEN ROAD_NAME LIKE '%영등포%' OR ST_NODE_NAME LIKE '%영등포%' OR ED_NODE_NAME LIKE '%영등포%' THEN '영등포구'
+            WHEN ROAD_NAME LIKE '%마포%' OR ST_NODE_NAME LIKE '%마포%' OR ED_NODE_NAME LIKE '%마포%' THEN '마포구'
+            WHEN ROAD_NAME LIKE '%종로%' OR ST_NODE_NAME LIKE '%종로%' OR ED_NODE_NAME LIKE '%종로%' THEN '종로구'
+            WHEN ROAD_NAME LIKE '%중랑%' OR ST_NODE_NAME LIKE '%중랑%' OR ED_NODE_NAME LIKE '%중랑%' THEN '중랑구'
+            WHEN ROAD_NAME LIKE '%중구%' OR ST_NODE_NAME LIKE '%중구%' OR ED_NODE_NAME LIKE '%중구%' THEN '중구'
+            WHEN ROAD_NAME LIKE '%송파%' OR ST_NODE_NAME LIKE '%송파%' OR ED_NODE_NAME LIKE '%송파%' THEN '송파구'
+            WHEN ROAD_NAME LIKE '%강동%' OR ST_NODE_NAME LIKE '%강동%' OR ED_NODE_NAME LIKE '%강동%' THEN '강동구'
+            WHEN ROAD_NAME LIKE '%강서%' OR ST_NODE_NAME LIKE '%강서%' OR ED_NODE_NAME LIKE '%강서%' THEN '강서구'
+            WHEN ROAD_NAME LIKE '%강북%' OR ST_NODE_NAME LIKE '%강북%' OR ED_NODE_NAME LIKE '%강북%' THEN '강북구'
+            WHEN ROAD_NAME LIKE '%노원%' OR ST_NODE_NAME LIKE '%노원%' OR ED_NODE_NAME LIKE '%노원%' THEN '노원구'
+            WHEN ROAD_NAME LIKE '%도봉%' OR ST_NODE_NAME LIKE '%도봉%' OR ED_NODE_NAME LIKE '%도봉%' THEN '도봉구'
+            WHEN ROAD_NAME LIKE '%성북%' OR ST_NODE_NAME LIKE '%성북%' OR ED_NODE_NAME LIKE '%성북%' THEN '성북구'
+            WHEN ROAD_NAME LIKE '%동대문%' OR ST_NODE_NAME LIKE '%동대문%' OR ED_NODE_NAME LIKE '%동대문%' THEN '동대문구'
+            WHEN ROAD_NAME LIKE '%광진%' OR ST_NODE_NAME LIKE '%광진%' OR ED_NODE_NAME LIKE '%광진%' THEN '광진구'
+            WHEN ROAD_NAME LIKE '%성동%' OR ST_NODE_NAME LIKE '%성동%' OR ED_NODE_NAME LIKE '%성동%' THEN '성동구'
+            WHEN ROAD_NAME LIKE '%용산%' OR ST_NODE_NAME LIKE '%용산%' OR ED_NODE_NAME LIKE '%용산%' THEN '용산구'
+            WHEN ROAD_NAME LIKE '%은평%' OR ST_NODE_NAME LIKE '%은평%' OR ED_NODE_NAME LIKE '%은평%' THEN '은평구'
+            WHEN ROAD_NAME LIKE '%서대문%' OR ST_NODE_NAME LIKE '%서대문%' OR ED_NODE_NAME LIKE '%서대문%' THEN '서대문구'
+            WHEN ROAD_NAME LIKE '%동작%' OR ST_NODE_NAME LIKE '%동작%' OR ED_NODE_NAME LIKE '%동작%' THEN '동작구'
+            WHEN ROAD_NAME LIKE '%관악%' OR ST_NODE_NAME LIKE '%관악%' OR ED_NODE_NAME LIKE '%관악%' THEN '관악구'
+            WHEN ROAD_NAME LIKE '%금천%' OR ST_NODE_NAME LIKE '%금천%' OR ED_NODE_NAME LIKE '%금천%' THEN '금천구'
+            WHEN ROAD_NAME LIKE '%구로%' OR ST_NODE_NAME LIKE '%구로%' OR ED_NODE_NAME LIKE '%구로%' THEN '구로구'
+            WHEN ROAD_NAME LIKE '%양천%' OR ST_NODE_NAME LIKE '%양천%' OR ED_NODE_NAME LIKE '%양천%' THEN '양천구'
+            ELSE NULL
+        END AS REGION_KEY,
+        SUM(SUM_PROBE_COUNT)                  AS TMAP_VOLUME
+    FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME
+    GROUP BY 1, 2
+)
+SELECT TS, REGION_KEY, TMAP_VOLUME
+FROM sgg_extract
+WHERE REGION_KEY IS NOT NULL
+  AND TS >= DATEADD('MONTH', -6,
+        (SELECT MAX(DATE_TRUNC('MONTH', DATA_DATE)::DATE)
+         FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME));
 
 
 -- ============================================================
@@ -165,8 +303,12 @@ SELECT 'pop_detect',     COUNT(*), COUNT(DISTINCT REGION_KEY) FROM pop_timeserie
 UNION ALL
 SELECT 'telecom_train',  COUNT(*), COUNT(DISTINCT REGION_KEY) FROM telecom_timeseries_train
 UNION ALL
-SELECT 'telecom_detect', COUNT(*), COUNT(DISTINCT REGION_KEY) FROM telecom_timeseries_detect;
--- 기대: 모든 row_count > 0, telecom regions = 서울 25개 구
+SELECT 'telecom_detect', COUNT(*), COUNT(DISTINCT REGION_KEY) FROM telecom_timeseries_detect
+UNION ALL
+SELECT 'tmap_train',     COUNT(*), COUNT(DISTINCT REGION_KEY) FROM tmap_timeseries_train
+UNION ALL
+SELECT 'tmap_detect',    COUNT(*), COUNT(DISTINCT REGION_KEY) FROM tmap_timeseries_detect;
+-- 기대: 모든 row_count > 0, telecom/tmap regions 최대 서울 25개 구
 
 -- 통신 REGION_KEY 샘플 (SGG명과 일치하는지 확인)
 SELECT DISTINCT REGION_KEY FROM telecom_timeseries_train ORDER BY 1 LIMIT 30;
@@ -256,6 +398,15 @@ CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION telecom_anomaly_model(
     LABEL_COLNAME     => NULL
 );
 
+-- 3-4. TMAP 교통량 모델 (STEP 0-10에서 18개월 이상 확인 후 실행)
+CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION tmap_anomaly_model(
+    INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.tmap_timeseries_train'),
+    SERIES_COLNAME    => 'REGION_KEY',
+    TIMESTAMP_COLNAME => 'TS',
+    TARGET_COLNAME    => 'TMAP_VOLUME',
+    LABEL_COLNAME     => NULL
+);
+
 
 -- ============================================================
 -- STEP 4: 이상 탐지 실행 (3개 모델)
@@ -295,6 +446,17 @@ SELECT * FROM TABLE(
     )
 );
 
+-- 4-4. TMAP 교통량 이상 탐지
+CREATE OR REPLACE TABLE TMAP_ANOMALY_RESULTS AS
+SELECT * FROM TABLE(
+    tmap_anomaly_model!DETECT_ANOMALIES(
+        INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.tmap_timeseries_detect'),
+        SERIES_COLNAME    => 'REGION_KEY',
+        TIMESTAMP_COLNAME => 'TS',
+        TARGET_COLNAME    => 'TMAP_VOLUME'
+    )
+);
+
 
 -- ============================================================
 -- VALIDATION 2: 탐지 결과 확인
@@ -309,28 +471,30 @@ SELECT 'pop', COUNT(*), SUM(CASE WHEN IS_ANOMALY THEN 1 ELSE 0 END), MIN(PERCENT
 FROM POP_ANOMALY_RESULTS
 UNION ALL
 SELECT 'telecom', COUNT(*), SUM(CASE WHEN IS_ANOMALY THEN 1 ELSE 0 END), MIN(PERCENTILE), MAX(PERCENTILE)
-FROM TELECOM_ANOMALY_RESULTS;
+FROM TELECOM_ANOMALY_RESULTS
+UNION ALL
+SELECT 'tmap', COUNT(*), SUM(CASE WHEN IS_ANOMALY THEN 1 ELSE 0 END), MIN(PERCENTILE), MAX(PERCENTILE)
+FROM TMAP_ANOMALY_RESULTS;
 -- 기대: 모든 total > 0, PERCENTILE 범위 0~1
 
 
 -- ============================================================
--- STEP 5: REGION_ALERTS — 3개 신호 통합
+-- STEP 5: REGION_ALERTS — 4개 신호 통합
 USE DATABASE MOVERADAR; USE SCHEMA PUBLIC;
 --
 -- 컬럼 매핑:
---   PRICE_ANOMALY_RESULTS.SERIES  = "서초구_방배동" (SGG_EMD)
---   POP_ANOMALY_RESULTS.SERIES    = "서초구" (SGG)
+--   PRICE_ANOMALY_RESULTS.SERIES   = "서초구_방배동" (SGG_EMD)
+--   POP_ANOMALY_RESULTS.SERIES     = "서초구" (SGG)
 --   TELECOM_ANOMALY_RESULTS.SERIES = "서초구" (SGG, INSTALL_CITY)
+--   TMAP_ANOMALY_RESULTS.SERIES    = "서초구" (SGG, 간선도로 기반 집계)
 --
 -- 조인 전략:
---   price(EMD) LEFT JOIN pop(SGG):     SPLIT_PART(p.SERIES,'_',1) = pop.SERIES
---   price(EMD) LEFT JOIN telecom(SGG): SPLIT_PART(p.SERIES,'_',1) = tc.SERIES
---   SGG/EMD:                           SPLIT_PART(p.SERIES,'_',1/2) 에서 직접 추출
---   DISTRICT_CODE/GEOM:                M_SCCO_MST LEFT JOIN (없어도 alert 생성)
+--   price(EMD) LEFT JOIN pop/telecom/tmap(SGG): SPLIT_PART(p.SERIES,'_',1) = other.SERIES
 --
--- COMBINED_SCORE = |price_pct - 0.5| × 2 × 0.50
---                + |pop_pct   - 0.5| × 2 × 0.30
---                + |tc_pct    - 0.5| × 2 × 0.20
+-- COMBINED_SCORE = |price_pct - 0.5| × 2 × 0.40   (시세: 가장 강한 선행 신호)
+--                + |pop_pct   - 0.5| × 2 × 0.25   (전입인구: 이사 직접 증거)
+--                + |tc_pct    - 0.5| × 2 × 0.20   (통신개통: 실제 입주 증거)
+--                + |tmap_pct  - 0.5| × 2 × 0.15   (교통량: 이동 활동 프록시)
 --
 -- 경보 임계값: PERCENTILE > 0.75 (급등) 또는 < 0.25 (급락)
 -- ============================================================
@@ -343,38 +507,49 @@ WITH base AS (
         SPLIT_PART(p.SERIES, '_', 2)                               AS EMD,
         p.TS                                                        AS ALERT_DATE,
 
-        -- 시세 신호
+        -- 시세 신호 (가중치 0.40)
         p.PERCENTILE                                                AS PRICE_PERCENTILE,
         p.Y                                                         AS PRICE_ACTUAL,
         p.FORECAST                                                  AS PRICE_FORECAST,
         (p.PERCENTILE > 0.75 OR p.PERCENTILE < 0.25)              AS PRICE_IS_ANOMALY,
 
-        -- 전입인구 신호
+        -- 전입인구 신호 (가중치 0.25)
         COALESCE(pop.PERCENTILE, 0.5)                              AS POP_PERCENTILE,
         pop.Y                                                       AS POP_ACTUAL,
         pop.FORECAST                                                AS POP_FORECAST,
         (COALESCE(pop.PERCENTILE, 0.5) > 0.75
          OR COALESCE(pop.PERCENTILE, 0.5) < 0.25)                 AS POP_IS_ANOMALY,
 
-        -- 통신 개통 신호
+        -- 통신 개통 신호 (가중치 0.20)
         COALESCE(tc.PERCENTILE, 0.5)                               AS TELECOM_PERCENTILE,
         tc.Y                                                        AS TELECOM_ACTUAL,
         tc.FORECAST                                                 AS TELECOM_FORECAST,
         (COALESCE(tc.PERCENTILE, 0.5) > 0.75
          OR COALESCE(tc.PERCENTILE, 0.5) < 0.25)                  AS TELECOM_IS_ANOMALY,
 
-        -- 결합 점수 (높을수록 이상도 강함)
-        (ABS(p.PERCENTILE - 0.5) * 2 * 0.50
-         + ABS(COALESCE(pop.PERCENTILE, 0.5) - 0.5) * 2 * 0.30
-         + ABS(COALESCE(tc.PERCENTILE, 0.5)  - 0.5) * 2 * 0.20) AS COMBINED_SCORE
+        -- TMAP 교통량 신호 (가중치 0.15)
+        COALESCE(tm.PERCENTILE, 0.5)                               AS TMAP_PERCENTILE,
+        tm.Y                                                        AS TMAP_ACTUAL,
+        tm.FORECAST                                                 AS TMAP_FORECAST,
+        (COALESCE(tm.PERCENTILE, 0.5) > 0.75
+         OR COALESCE(tm.PERCENTILE, 0.5) < 0.25)                  AS TMAP_IS_ANOMALY,
+
+        -- 결합 점수 (높을수록 이상도 강함, max=1.0)
+        (ABS(p.PERCENTILE - 0.5) * 2 * 0.40
+         + ABS(COALESCE(pop.PERCENTILE, 0.5) - 0.5) * 2 * 0.25
+         + ABS(COALESCE(tc.PERCENTILE,  0.5) - 0.5) * 2 * 0.20
+         + ABS(COALESCE(tm.PERCENTILE,  0.5) - 0.5) * 2 * 0.15) AS COMBINED_SCORE
     FROM PRICE_ANOMALY_RESULTS p
     LEFT JOIN POP_ANOMALY_RESULTS pop
         ON SPLIT_PART(p.SERIES, '_', 1) = pop.SERIES AND p.TS = pop.TS
     LEFT JOIN TELECOM_ANOMALY_RESULTS tc
         ON SPLIT_PART(p.SERIES, '_', 1) = tc.SERIES AND p.TS = tc.TS
+    LEFT JOIN TMAP_ANOMALY_RESULTS tm
+        ON SPLIT_PART(p.SERIES, '_', 1) = tm.SERIES AND p.TS = tm.TS
     WHERE (p.PERCENTILE > 0.75 OR p.PERCENTILE < 0.25)
        OR (COALESCE(pop.PERCENTILE, 0.5) > 0.75 OR COALESCE(pop.PERCENTILE, 0.5) < 0.25)
-       OR (COALESCE(tc.PERCENTILE, 0.5) > 0.75 OR COALESCE(tc.PERCENTILE, 0.5) < 0.25)
+       OR (COALESCE(tc.PERCENTILE,  0.5) > 0.75 OR COALESCE(tc.PERCENTILE,  0.5) < 0.25)
+       OR (COALESCE(tm.PERCENTILE,  0.5) > 0.75 OR COALESCE(tm.PERCENTILE,  0.5) < 0.25)
 )
 SELECT
     b.*,
@@ -383,13 +558,21 @@ SELECT
     cp.DOMINANT_AGE_GROUP,
     cp.INCOME_PROFILE,
     CASE
+        WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY AND b.TELECOM_IS_ANOMALY AND b.TMAP_IS_ANOMALY THEN '4중 동시 경보'
         WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY AND b.TELECOM_IS_ANOMALY THEN '3중 동시 경보'
+        WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY AND b.TMAP_IS_ANOMALY   THEN '시세+전입인구+교통 경보'
+        WHEN b.PRICE_IS_ANOMALY AND b.TELECOM_IS_ANOMALY AND b.TMAP_IS_ANOMALY THEN '시세+통신+교통 경보'
+        WHEN b.POP_IS_ANOMALY AND b.TELECOM_IS_ANOMALY AND b.TMAP_IS_ANOMALY  THEN '전입인구+통신+교통 경보'
         WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY                          THEN '시세+전입인구 경보'
         WHEN b.PRICE_IS_ANOMALY AND b.TELECOM_IS_ANOMALY                      THEN '시세+통신 경보'
+        WHEN b.PRICE_IS_ANOMALY AND b.TMAP_IS_ANOMALY                         THEN '시세+교통 경보'
         WHEN b.POP_IS_ANOMALY   AND b.TELECOM_IS_ANOMALY                      THEN '전입인구+통신 경보'
+        WHEN b.POP_IS_ANOMALY   AND b.TMAP_IS_ANOMALY                         THEN '전입인구+교통 경보'
+        WHEN b.TELECOM_IS_ANOMALY AND b.TMAP_IS_ANOMALY                       THEN '통신+교통 경보'
         WHEN b.PRICE_IS_ANOMALY                                                THEN '시세 경보'
         WHEN b.POP_IS_ANOMALY                                                  THEN '전입인구 경보'
         WHEN b.TELECOM_IS_ANOMALY                                              THEN '통신 경보'
+        WHEN b.TMAP_IS_ANOMALY                                                 THEN '교통량 경보'
     END                                                                        AS ALERT_TYPE
 FROM base b
 LEFT JOIN SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST m
@@ -463,27 +646,42 @@ SELECT * FROM CALL_CENTER_CONTEXT ORDER BY YEAR_MONTH DESC LIMIT 10;
 
 -- ============================================================
 -- STEP 6c: MARKETING_ALERTS — Cortex COMPLETE 마케팅 문구
--- 대상: COMBINED_SCORE > 0.55, SGG별 TOP 5 (다양성 확보)
--- 프롬프트: 경보 유형 + 고객 프로파일 + 트렌딩 렌탈 상품 포함
+-- 대상: COMBINED_SCORE > 0.25 (완화), SGG별 TOP 15 (확대)
+-- LLM: messages array + temperature 0.9 (다양성 확보)
+-- 콜센터 컨텍스트(CALL_CENTER_CONTEXT) 프롬프트 반영
+-- 실제 percentile 수치 포함
 -- ============================================================
+USE DATABASE MOVERADAR; USE SCHEMA PUBLIC;
 
 CREATE OR REPLACE TABLE MARKETING_ALERTS AS
 WITH top_rental AS (
-    -- LLM 프롬프트에 삽입할 TOP 3 렌탈 소분류 (정수기·비데·공기청정기 등 구체적 상품명)
     SELECT LISTAGG(RENTAL_SUB_CATEGORY, '·') WITHIN GROUP (ORDER BY RANK_NUM) AS rental_products
     FROM RENTAL_TREND_CONTEXT
     WHERE RANK_NUM <= 3
 ),
+-- 콜센터: 최신 월 기준 상위 카테고리 연결률/전환율
+latest_call AS (
+    SELECT
+        LISTAGG(MAIN_CATEGORY_NAME || '(' || ROUND(AVG_CONNECTION_RATE*100,0) || '%연결·전환' || ROUND(CALL_TO_CONTRACT_CVR*100,1) || '%)', '·')
+            WITHIN GROUP (ORDER BY TOTAL_CALLS DESC) AS call_context
+    FROM (
+        SELECT * FROM CALL_CENTER_CONTEXT
+        WHERE YEAR_MONTH = (SELECT MAX(YEAR_MONTH) FROM CALL_CENTER_CONTEXT)
+          AND MAIN_CATEGORY_NAME != '기타'
+        ORDER BY TOTAL_CALLS DESC
+        LIMIT 3
+    )
+),
 -- 1단계: 동별 최고 점수 1개만 (월 중복 제거)
 dedup_by_emd AS (
     SELECT * FROM REGION_ALERTS
-    WHERE COMBINED_SCORE > 0.55
+    WHERE COMBINED_SCORE > 0.25
     QUALIFY ROW_NUMBER() OVER (PARTITION BY REGION_KEY ORDER BY COMBINED_SCORE DESC) = 1
 ),
--- 2단계: 구별 TOP 5 (지역 다양성 확보)
+-- 2단계: 구별 TOP 15 (다양한 동 포함)
 alert_candidates AS (
     SELECT * FROM dedup_by_emd
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY SGG ORDER BY COMBINED_SCORE DESC) <= 5
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY SGG ORDER BY COMBINED_SCORE DESC) <= 15
 )
 SELECT
     r.REGION_KEY,
@@ -502,84 +700,98 @@ SELECT
     tr.rental_products                      AS TRENDING_RENTALS,
     SNOWFLAKE.CORTEX.COMPLETE(
         'mistral-large2',
-        CASE
-            WHEN r.ALERT_TYPE = '3중 동시 경보' THEN
-                '당신은 통신·렌탈 서비스 마케터입니다. 아래 정보를 바탕으로 이사 고객 대상 광고 문구를 한 줄로 작성하세요.
-규칙: 반드시 지역명 포함, 40자 이내, 설명·부가설명 없이 문구만 출력, 느낌표로 마무리, 아래 렌탈 상품 중 하나 반드시 언급.
+        ARRAY_CONSTRUCT(
+            OBJECT_CONSTRUCT('role', 'system', 'content',
+                '당신은 통신·렌탈 서비스 전문 카피라이터입니다. 반드시 지역명을 포함하고, 40자 이내의 광고 문구 한 줄만 출력하세요. 부가 설명, 큰따옴표, 줄바꿈 없이 문구만 출력합니다.'
+            ),
+            OBJECT_CONSTRUCT('role', 'user', 'content',
+                CASE
+                    WHEN r.ALERT_TYPE = '3중 동시 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-지역: ' || r.SGG || ' ' || r.EMD || '
-기간: ' || LEFT(r.ALERT_DATE::VARCHAR, 7) || '
-고객: ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ', ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
-이달의 인기 렌탈: ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || '
-핵심메시지: 시세·전입인구·통신 3개 지표 동시 급등 → 지금이 최적 타이밍
-서비스: 이달 개통 시 렌탈 0원 + 기가 인터넷 결합 혜택'
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
+[경보강도] 상위 ' || ROUND((1 - r.COMBINED_SCORE) * 100, 0) || '% 수준 (시세·전입인구·통신 3중 동시 이상)
+[시장신호] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile / 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile / 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile
+[수요강도] ' || COALESCE(lc.call_context, '인터넷 문의 급증') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 이달 개통 시 렌탈 0원 + 기가 인터넷 결합
+[금지] 설명 문장, 큰따옴표, 부가 설명 금지. 문구만.'
 
-            WHEN r.ALERT_TYPE = '시세+전입인구 경보' THEN
-                '당신은 통신·렌탈 서비스 마케터입니다. 아래 정보를 바탕으로 이사 고객 대상 광고 문구를 한 줄로 작성하세요.
-규칙: 반드시 지역명 포함, 40자 이내, 설명 없이 문구만 출력, 느낌표로 마무리, 아래 렌탈 상품 중 하나 반드시 언급.
+                    WHEN r.ALERT_TYPE = '시세+전입인구 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-지역: ' || r.SGG || ' ' || r.EMD || '
-기간: ' || LEFT(r.ALERT_DATE::VARCHAR, 7) || '
-고객: ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ', ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
-이달의 인기 렌탈: ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || '
-핵심메시지: 시세·전입인구 동시 급등 → 이사 직후 바로 설치 가능
-서비스: 이사 당일 렌탈 설치 + 초기 비용 0원'
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
+[경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile · 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile 동시 급등
+[수요강도] ' || COALESCE(lc.call_context, '인터넷 문의 증가') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 이사 당일 렌탈 설치 + 기가 인터넷 결합 할인
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
-            WHEN r.ALERT_TYPE = '시세+통신 경보' THEN
-                '당신은 통신·렌탈 서비스 마케터입니다. 아래 정보를 바탕으로 이사 고객 대상 광고 문구를 한 줄로 작성하세요.
-규칙: 반드시 지역명 포함, 40자 이내, 설명 없이 문구만 출력, 느낌표로 마무리, 인터넷 개통 언급 필수.
+                    WHEN r.ALERT_TYPE = '시세+통신 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-지역: ' || r.SGG || ' ' || r.EMD || '
-기간: ' || LEFT(r.ALERT_DATE::VARCHAR, 7) || '
-고객: ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ', ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
-핵심메시지: 시세·통신 동시 급등 → 이사 후 인터넷 빠른 개통 필요
-서비스: 기가 인터넷 당일 개통 + 렌탈 결합 시 월정액 할인'
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
+[경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile · 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile 동시 급등
+[수요강도] ' || COALESCE(lc.call_context, '개통 문의 급증') || '
+[서비스] 기가 인터넷 당일 개통 + 렌탈 결합 월정액 할인
+[조건] 인터넷 개통 언급 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
-            WHEN r.ALERT_TYPE = '전입인구+통신 경보' THEN
-                '당신은 통신·렌탈 서비스 마케터입니다. 아래 정보를 바탕으로 이사 고객 대상 광고 문구를 한 줄로 작성하세요.
-규칙: 반드시 지역명 포함, 40자 이내, 설명 없이 문구만 출력, 느낌표로 마무리, 결합 상품 언급 필수.
+                    WHEN r.ALERT_TYPE = '전입인구+통신 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-지역: ' || r.SGG || ' ' || r.EMD || '
-기간: ' || LEFT(r.ALERT_DATE::VARCHAR, 7) || '
-고객: ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ', ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
-이달의 인기 렌탈: ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || '
-핵심메시지: 전입인구·통신 동시 급증 → 새 이웃이 많은 지역, 결합 혜택 타이밍
-서비스: 인터넷+렌탈 결합 가입 시 월 최대 30% 할인'
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
+[경보강도] 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile · 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile 동시 급증
+[수요강도] ' || COALESCE(lc.call_context, '렌탈 문의 증가') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 인터넷+렌탈 결합 월 최대 30% 할인
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
-            WHEN r.ALERT_TYPE = '시세 경보' THEN
-                '당신은 통신·렌탈 서비스 마케터입니다. 아래 정보를 바탕으로 이사 고객 대상 광고 문구를 한 줄로 작성하세요.
-규칙: 반드시 지역명 포함, 40자 이내, 설명 없이 문구만 출력, 느낌표로 마무리, 인터넷 속도 언급 필수.
+                    WHEN r.ALERT_TYPE = '시세 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-지역: ' || r.SGG || ' ' || r.EMD || '
-기간: ' || LEFT(r.ALERT_DATE::VARCHAR, 7) || '
-고객: ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ', ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
-핵심메시지: 시세 급등 지역 → 프리미엄 이사 고객, 기가 인터넷 당일 개통
-서비스: 기가 인터넷 24시간 내 설치 보장'
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
+[경보강도] 시세 상위 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile 급등 지역
+[수요강도] ' || COALESCE(lc.call_context, '프리미엄 문의 증가') || '
+[서비스] 기가 인터넷 24시간 내 설치 보장
+[조건] 프리미엄·속도 강조 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
-            WHEN r.ALERT_TYPE = '전입인구 경보' THEN
-                '당신은 통신·렌탈 서비스 마케터입니다. 아래 정보를 바탕으로 이사 고객 대상 광고 문구를 한 줄로 작성하세요.
-규칙: 반드시 지역명 포함, 40자 이내, 설명 없이 문구만 출력, 느낌표로 마무리, 새집 시작 감성.
+                    WHEN r.ALERT_TYPE = '전입인구 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-지역: ' || r.SGG || ' ' || r.EMD || '
-기간: ' || LEFT(r.ALERT_DATE::VARCHAR, 7) || '
-고객: ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ', ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
-이달의 인기 렌탈: ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || '
-핵심메시지: 전입인구 급증 → 새집 이사 고객 집중 공략
-서비스: 신규 이사 고객 인터넷+렌탈 동시 가입 특가'
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
+[경보강도] 전입인구 상위 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile 급증 지역
+[수요강도] ' || COALESCE(lc.call_context, '이사 관련 문의 증가') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 이사 고객 인터넷+렌탈 동시 특가
+[조건] 새집 시작 감성 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
-            ELSE
-                '당신은 통신·렌탈 서비스 마케터입니다. 아래 정보를 바탕으로 이사 고객 대상 광고 문구를 한 줄로 작성하세요.
-규칙: 반드시 지역명 포함, 40자 이내, 설명 없이 문구만 출력, 느낌표로 마무리, 개통 속도 강조.
+                    ELSE
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-지역: ' || r.SGG || ' ' || r.EMD || '
-기간: ' || LEFT(r.ALERT_DATE::VARCHAR, 7) || '
-고객: ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ', ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
-핵심메시지: 통신 개통 급증 → 이사 완료 후 인터넷 미개통 고객 공략
-서비스: 기가 인터넷 당일 개통, 렌탈 첫 달 무료'
-        END
-    )                                       AS MARKETING_COPY
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
+[경보강도] 통신 개통 상위 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile 급증
+[수요강도] ' || COALESCE(lc.call_context, '개통 문의 급증') || '
+[서비스] 기가 인터넷 당일 개통 + 렌탈 첫 달 무료
+[조건] 개통 속도·첫 달 혜택 강조 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
+                END
+            )
+        ),
+        OBJECT_CONSTRUCT('temperature', 0.9)
+    )['choices'][0]['messages']::VARCHAR    AS MARKETING_COPY
 FROM alert_candidates r
-CROSS JOIN top_rental tr;
+CROSS JOIN top_rental tr
+CROSS JOIN latest_call lc;
 
 -- 결과 확인
 SELECT ALERT_TYPE, COUNT(*) AS cnt FROM MARKETING_ALERTS GROUP BY 1 ORDER BY cnt DESC;
@@ -620,17 +832,25 @@ SELECT
     SERIES, SERIES, NULL, TS,
     'telecom',
     Y, FORECAST, PERCENTILE, IS_ANOMALY
-FROM TELECOM_ANOMALY_RESULTS;
+FROM TELECOM_ANOMALY_RESULTS
+UNION ALL
+SELECT
+    SERIES, SERIES, NULL, TS,
+    'tmap',
+    Y, FORECAST, PERCENTILE, IS_ANOMALY
+FROM TMAP_ANOMALY_RESULTS;
 
 -- 7-2. SGG 요약 (대시보드 상단 KPI용)
 CREATE OR REPLACE TABLE SGG_SUMMARY AS
 SELECT
     SGG,
     COUNT(*)                                                    AS TOTAL_ALERTS,
+    SUM(CASE WHEN ALERT_TYPE = '4중 동시 경보'    THEN 1 ELSE 0 END) AS QUAD_ALERTS,
     SUM(CASE WHEN ALERT_TYPE = '3중 동시 경보'    THEN 1 ELSE 0 END) AS TRIPLE_ALERTS,
     SUM(CASE WHEN ALERT_TYPE LIKE '%시세%'        THEN 1 ELSE 0 END) AS PRICE_ALERTS,
     SUM(CASE WHEN ALERT_TYPE LIKE '%전입인구%'    THEN 1 ELSE 0 END) AS POP_ALERTS,
     SUM(CASE WHEN ALERT_TYPE LIKE '%통신%'        THEN 1 ELSE 0 END) AS TELECOM_ALERTS,
+    SUM(CASE WHEN ALERT_TYPE LIKE '%교통%'        THEN 1 ELSE 0 END) AS TMAP_ALERTS,
     ROUND(MAX(COMBINED_SCORE), 3)                               AS MAX_SCORE,
     ROUND(AVG(COMBINED_SCORE), 3)                               AS AVG_SCORE
 FROM REGION_ALERTS
