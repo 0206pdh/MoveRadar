@@ -596,6 +596,7 @@ base AS (
     SELECT
         pop.SERIES                                                       AS REGION_KEY,
         pop.SERIES                                                       AS SGG,
+        NULL::VARCHAR                                                    AS EMD,
         pop.TS                                                           AS ALERT_DATE,
 
         -- 시세 신호 (가중치 0.40, 데이터 없는 구는 중립 0.5)
@@ -679,7 +680,7 @@ FROM REGION_ALERTS;
 SELECT ALERT_TYPE, COUNT(*) AS cnt
 FROM REGION_ALERTS GROUP BY 1 ORDER BY cnt DESC;
 
-SELECT SGG, EMD, ALERT_TYPE, ROUND(COMBINED_SCORE, 3) AS score, ALERT_DATE
+SELECT SGG, ALERT_TYPE, ROUND(COMBINED_SCORE, 3) AS score, ALERT_DATE
 FROM REGION_ALERTS ORDER BY COMBINED_SCORE DESC LIMIT 15;
 
 
@@ -810,7 +811,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '4중 동시 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
 [경보강도] 4중 동시 이상 (시세·전입인구·통신·카드소비 ALL 경보)
 [시장신호] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile / 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile / 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile / 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile
@@ -823,7 +824,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '3중 동시 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
 [경보강도] 상위 ' || ROUND((1 - r.COMBINED_SCORE) * 100, 0) || '% 수준 (시세·전입인구·통신 3중 동시 이상)
 [시장신호] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile / 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile / 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile
@@ -836,7 +837,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '시세+전입인구+카드 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
 [경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile · 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile · 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile 동시 급등
 [수요강도] ' || COALESCE(lc.call_context, '이사 준비 구매 급증') || '
@@ -848,7 +849,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '시세+통신+카드 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
 [경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile · 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile · 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile 동시 급등
 [수요강도] ' || COALESCE(lc.call_context, '프리미엄 개통·구매 문의 급증') || '
@@ -859,7 +860,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '전입인구+통신+카드 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
 [경보강도] 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile · 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile · 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile 동시 급증
 [수요강도] ' || COALESCE(lc.call_context, '입주 완료·가전 구매 동시 증가') || '
@@ -870,7 +871,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '시세+전입인구 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
 [경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile · 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile 동시 급등
 [수요강도] ' || COALESCE(lc.call_context, '인터넷 문의 증가') || '
@@ -881,7 +882,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '시세+통신 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
 [경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile · 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile 동시 급등
 [수요강도] ' || COALESCE(lc.call_context, '개통 문의 급증') || '
@@ -892,7 +893,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '시세+카드 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
 [경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile 급등 + 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile (가전·가구 구매 급증)
 [수요강도] ' || COALESCE(lc.call_context, '이사 준비 소비 증가') || '
@@ -904,7 +905,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '전입인구+통신 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
 [경보강도] 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile · 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile 동시 급증
 [수요강도] ' || COALESCE(lc.call_context, '렌탈 문의 증가') || '
@@ -915,7 +916,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '전입인구+카드 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
 [경보강도] 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile 급증 + 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile (생활가전 구매 증가)
 [수요강도] ' || COALESCE(lc.call_context, '이사 고객 문의 증가') || '
@@ -927,7 +928,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '통신+카드 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
 [경보강도] 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile · 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile 동시 급증 (입주 완료 확정 신호)
 [수요강도] ' || COALESCE(lc.call_context, '개통·렌탈 동시 문의 증가') || '
@@ -939,7 +940,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '시세 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
 [경보강도] 시세 상위 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile 급등 지역
 [수요강도] ' || COALESCE(lc.call_context, '프리미엄 문의 증가') || '
@@ -950,7 +951,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '전입인구 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
 [경보강도] 전입인구 상위 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile 급증 지역
 [수요강도] ' || COALESCE(lc.call_context, '이사 관련 문의 증가') || '
@@ -962,7 +963,7 @@ SELECT
                     WHEN r.ALERT_TYPE = '카드소비 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
 [경보강도] 카드소비 상위 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile (가전·가구·할인점 소비 급증 = 이사 준비 선행 신호)
 [수요강도] ' || COALESCE(lc.call_context, '이사 준비 구매 증가') || '
@@ -974,7 +975,7 @@ SELECT
                     ELSE
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
-[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[지역] ' || r.SGG || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
 [고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
 [경보강도] 통신 개통 상위 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile 급증
 [수요강도] ' || COALESCE(lc.call_context, '개통 문의 급증') || '
@@ -994,7 +995,7 @@ LEFT JOIN tmap_ctx tm ON r.SGG = tm.SGG;
 -- 결과 확인
 SELECT ALERT_TYPE, COUNT(*) AS cnt FROM MARKETING_ALERTS GROUP BY 1 ORDER BY cnt DESC;
 
-SELECT SGG, EMD, ALERT_TYPE, ROUND(COMBINED_SCORE, 2) AS score,
+SELECT SGG, ALERT_TYPE, ROUND(COMBINED_SCORE, 2) AS score,
        DOMINANT_AGE_GROUP, TRENDING_RENTALS,
        LEFT(MARKETING_COPY, 80) AS copy_preview
 FROM MARKETING_ALERTS

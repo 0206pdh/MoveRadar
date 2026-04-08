@@ -14,13 +14,14 @@ session = get_active_session()
 def load_alerts():
     return session.sql("""
         SELECT
-            SGG, EMD, REGION_KEY, DISTRICT_CODE,
+            SGG, REGION_KEY, DISTRICT_CODE,
             ALERT_DATE::VARCHAR          AS ALERT_DATE,
             ALERT_TYPE,
             ROUND(COMBINED_SCORE, 3)     AS COMBINED_SCORE,
             ROUND(PRICE_SCORE, 3)        AS PRICE_SCORE,
             ROUND(POP_SCORE, 3)          AS POP_SCORE,
             ROUND(TELECOM_SCORE, 3)      AS TELECOM_SCORE,
+            ROUND(CARD_SCORE, 3)         AS CARD_SCORE,
             DOMINANT_AGE_GROUP,
             INCOME_PROFILE,
             TRENDING_RENTALS,
@@ -78,23 +79,31 @@ if alerts.empty:
     st.error("MARKETING_ALERTS 데이터가 없습니다. pipeline.sql STEP 6c를 먼저 실행해 주세요.")
     st.stop()
 
-alerts["REGION"] = alerts["SGG"] + " " + alerts["EMD"]
+alerts["REGION"] = alerts["SGG"]
 alerts["YM"] = alerts["ALERT_DATE"].str[:7]
 
 # ── 경보 유형별 색상 ────────────────────────────────────────────
 ALERT_COLORS = {
-    "3중 동시 경보":        "#7b1fa2",
-    "시세+전입인구 경보":   "#d32f2f",
-    "시세+통신 경보":       "#e64a19",
-    "전입인구+통신 경보":   "#1565c0",
-    "시세 경보":            "#f57c00",
-    "전입인구 경보":        "#1976d2",
-    "통신 경보":            "#388e3c",
+    "4중 동시 경보":            "#4a148c",
+    "3중 동시 경보":            "#7b1fa2",
+    "시세+전입인구+카드 경보":  "#ad1457",
+    "시세+통신+카드 경보":      "#c62828",
+    "전입인구+통신+카드 경보":  "#0d47a1",
+    "시세+전입인구 경보":        "#d32f2f",
+    "시세+통신 경보":            "#e64a19",
+    "시세+카드 경보":            "#bf360c",
+    "전입인구+통신 경보":        "#1565c0",
+    "전입인구+카드 경보":        "#1976d2",
+    "통신+카드 경보":            "#00695c",
+    "시세 경보":                "#f57c00",
+    "전입인구 경보":             "#1976d2",
+    "통신 경보":                "#388e3c",
+    "카드소비 경보":             "#6a1b9a",
 }
 
 # ── 헤더 ────────────────────────────────────────────────────────
 st.title("📡 MoveRadar v2 — 이사 수요 경보 대시보드")
-st.caption("신호 3개: 아파트 시세 · 전입인구 · 통신 개통 이상 탐지 | Snowflake Cortex ML")
+st.caption("신호 4개: 아파트 시세 · 전입인구 · 통신 개통 · 카드소비(가전/가구) 이상 탐지 | Snowflake Cortex ML")
 
 # ── 사이드바 필터 ────────────────────────────────────────────────
 with st.sidebar:
@@ -123,23 +132,23 @@ with tab1:
     # KPI
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("총 경보", len(filtered))
-    k2.metric("3중 동시 경보", int((filtered["ALERT_TYPE"] == "3중 동시 경보").sum()))
+    k2.metric("4중 동시 경보", int((filtered["ALERT_TYPE"] == "4중 동시 경보").sum()))
     k3.metric("최고 점수", f"{filtered['COMBINED_SCORE'].max():.3f}" if not filtered.empty else "-")
-    k4.metric("대상 동", filtered["REGION"].nunique())
-    k5.metric("대상 구", filtered["SGG"].nunique())
+    k4.metric("대상 구", filtered["SGG"].nunique())
+    k5.metric("3중 이상 경보", int(filtered["ALERT_TYPE"].str.contains("3중|4중", na=False).sum()))
 
     st.divider()
 
     col_chart, col_detail = st.columns([3, 2])
 
     with col_chart:
-        st.subheader("지역별 경보 점수 TOP 20")
+        st.subheader("지역별 경보 점수 TOP 25")
 
         chart_data = (
             filtered.groupby(["REGION", "ALERT_TYPE", "SGG"], as_index=False)
             ["COMBINED_SCORE"].max()
             .sort_values("COMBINED_SCORE", ascending=False)
-            .head(20)
+            .head(25)
         )
 
         if not chart_data.empty:
@@ -159,17 +168,18 @@ with tab1:
                     ),
                     tooltip=["REGION", "ALERT_TYPE", alt.Tooltip("COMBINED_SCORE:Q", format=".3f")],
                 )
-                .properties(height=480)
+                .properties(height=520)
             )
             st.altair_chart(bar, use_container_width=True)
 
-        # 신호별 점수 분포 (Price / Pop / Telecom)
-        st.subheader("3개 신호 점수 분포")
-        score_melt = filtered[["REGION", "PRICE_SCORE", "POP_SCORE", "TELECOM_SCORE"]].melt(
+        # 신호별 점수 분포 (4개 신호)
+        st.subheader("4개 신호 점수 분포")
+        score_melt = filtered[["REGION", "PRICE_SCORE", "POP_SCORE", "TELECOM_SCORE", "CARD_SCORE"]].melt(
             id_vars="REGION", var_name="신호", value_name="점수"
         )
         score_melt["신호"] = score_melt["신호"].map({
-            "PRICE_SCORE": "시세", "POP_SCORE": "전입인구", "TELECOM_SCORE": "통신"
+            "PRICE_SCORE": "시세", "POP_SCORE": "전입인구",
+            "TELECOM_SCORE": "통신", "CARD_SCORE": "카드소비"
         })
         violin = (
             alt.Chart(score_melt)
@@ -177,7 +187,10 @@ with tab1:
             .encode(
                 x=alt.X("신호:N", title=""),
                 y=alt.Y("점수:Q", scale=alt.Scale(domain=[0, 1])),
-                color="신호:N",
+                color=alt.Color("신호:N", scale=alt.Scale(
+                    domain=["시세", "전입인구", "통신", "카드소비"],
+                    range=["#f57c00", "#1976d2", "#388e3c", "#6a1b9a"],
+                )),
             )
             .properties(height=220)
         )
@@ -205,10 +218,11 @@ with tab1:
             m1.metric("결합 점수", f"{row['COMBINED_SCORE']:.3f}")
             m2.metric("경보 유형", row["ALERT_TYPE"] or "-")
 
-            m3, m4, m5 = st.columns(3)
-            m3.metric("시세 점수", f"{row['PRICE_SCORE']:.3f}")
-            m4.metric("전입인구 점수", f"{row['POP_SCORE']:.3f}")
-            m5.metric("통신 점수", f"{row['TELECOM_SCORE']:.3f}")
+            m3, m4, m5, m6 = st.columns(4)
+            m3.metric("시세", f"{row['PRICE_SCORE']:.3f}")
+            m4.metric("전입인구", f"{row['POP_SCORE']:.3f}")
+            m5.metric("통신", f"{row['TELECOM_SCORE']:.3f}")
+            m6.metric("카드소비", f"{row['CARD_SCORE']:.3f}")
 
             st.write(f"**주요 고객층:** {row['DOMINANT_AGE_GROUP'] or '-'}")
             st.write(f"**소득 수준:** {row['INCOME_PROFILE'] or '-'}")
@@ -228,10 +242,10 @@ with tab1:
     with st.expander("📋 전체 경보 목록"):
         disp = filtered[[
             "REGION", "YM", "ALERT_TYPE", "COMBINED_SCORE",
-            "PRICE_SCORE", "POP_SCORE", "TELECOM_SCORE",
+            "PRICE_SCORE", "POP_SCORE", "TELECOM_SCORE", "CARD_SCORE",
             "DOMINANT_AGE_GROUP", "INCOME_PROFILE"
         ]].copy()
-        disp.columns = ["지역", "기준월", "경보유형", "결합점수", "시세", "전입인구", "통신", "주요연령대", "소득수준"]
+        disp.columns = ["지역", "기준월", "경보유형", "결합점수", "시세", "전입인구", "통신", "카드소비", "주요연령대", "소득수준"]
         st.dataframe(disp, use_container_width=True, hide_index=True)
 
 
@@ -239,7 +253,7 @@ with tab1:
 # TAB 2: 지역 신호 추이
 # ════════════════════════════════════════════════════════════════
 with tab2:
-    st.subheader("지역별 3개 신호 시계열 추이")
+    st.subheader("지역별 4개 신호 시계열 추이")
     st.caption("Cortex Anomaly Detection: 실제값 vs 예측값, PERCENTILE 기준 이상 구간 표시")
 
     all_regions = sorted(alerts["REGION_KEY"].unique().tolist())
@@ -253,8 +267,18 @@ with tab2:
         else:
             ts_df["TS"] = pd.to_datetime(ts_df["TS"])
 
-            signal_labels = {"price": "🏠 시세", "pop": "👥 전입인구", "telecom": "📱 통신 개통"}
-            signal_colors = {"price": "#f57c00", "pop": "#1976d2", "telecom": "#388e3c"}
+            signal_labels = {
+                "price":   "🏠 시세",
+                "pop":     "👥 전입인구",
+                "telecom": "📱 통신 개통",
+                "card":    "💳 카드소비(가전·가구)",
+            }
+            signal_colors = {
+                "price":   "#f57c00",
+                "pop":     "#1976d2",
+                "telecom": "#388e3c",
+                "card":    "#6a1b9a",
+            }
 
             for sig_key, sig_label in signal_labels.items():
                 sig_df = ts_df[ts_df["SIGNAL_TYPE"] == sig_key].copy()
@@ -262,7 +286,6 @@ with tab2:
                     continue
 
                 st.markdown(f"#### {sig_label}")
-                anomaly_pts = sig_df[sig_df["IS_ANOMALY"] == True]
 
                 base = alt.Chart(sig_df).encode(x=alt.X("TS:T", title="날짜"))
 
@@ -302,11 +325,12 @@ with tab2:
     try:
         sgg_df = load_sgg_summary()
         if not sgg_df.empty:
-            heat_data = sgg_df[["SGG", "PRICE_ALERTS", "POP_ALERTS", "TELECOM_ALERTS"]].melt(
+            heat_data = sgg_df[["SGG", "PRICE_ALERTS", "POP_ALERTS", "TELECOM_ALERTS", "CARD_ALERTS"]].melt(
                 id_vars="SGG", var_name="신호", value_name="경보수"
             )
             heat_data["신호"] = heat_data["신호"].map({
-                "PRICE_ALERTS": "시세", "POP_ALERTS": "전입인구", "TELECOM_ALERTS": "통신"
+                "PRICE_ALERTS": "시세", "POP_ALERTS": "전입인구",
+                "TELECOM_ALERTS": "통신", "CARD_ALERTS": "카드소비"
             })
             heatmap = (
                 alt.Chart(heat_data)
@@ -414,7 +438,7 @@ with tab3:
 # ════════════════════════════════════════════════════════════════
 with tab4:
     st.subheader("📣 LLM 마케팅 문구 라이브러리")
-    st.caption("Snowflake Cortex COMPLETE (mistral-large2) 생성 문구 | 경보 유형별 맞춤 작성")
+    st.caption("Snowflake Cortex COMPLETE (mistral-large2) 생성 문구 | 15가지 경보 유형별 맞춤 작성")
 
     # 경보 유형별 탭
     alert_types_present = [t for t in ALERT_COLORS.keys()
@@ -454,7 +478,9 @@ with tab4:
     st.markdown("#### 경보 유형별 평균 점수")
     if not alerts.empty:
         type_summary = (
-            alerts.groupby("ALERT_TYPE")[["COMBINED_SCORE", "PRICE_SCORE", "POP_SCORE", "TELECOM_SCORE"]]
+            alerts.groupby("ALERT_TYPE")[
+                ["COMBINED_SCORE", "PRICE_SCORE", "POP_SCORE", "TELECOM_SCORE", "CARD_SCORE"]
+            ]
             .mean()
             .round(3)
             .reset_index()
@@ -467,6 +493,7 @@ with tab4:
             "PRICE_SCORE": "시세",
             "POP_SCORE": "전입인구",
             "TELECOM_SCORE": "통신",
+            "CARD_SCORE": "카드소비",
         })
         type_chart = (
             alt.Chart(type_melt)
@@ -475,12 +502,12 @@ with tab4:
                 x=alt.X("평균 점수:Q", scale=alt.Scale(domain=[0, 1])),
                 y=alt.Y("ALERT_TYPE:N", sort="-x"),
                 color=alt.Color("신호:N", scale=alt.Scale(
-                    domain=["결합", "시세", "전입인구", "통신"],
-                    range=["#424242", "#f57c00", "#1976d2", "#388e3c"],
+                    domain=["결합", "시세", "전입인구", "통신", "카드소비"],
+                    range=["#424242", "#f57c00", "#1976d2", "#388e3c", "#6a1b9a"],
                 )),
                 xOffset="신호:N",
                 tooltip=["ALERT_TYPE", "신호", alt.Tooltip("평균 점수:Q", format=".3f")],
             )
-            .properties(height=300)
+            .properties(height=400)
         )
         st.altair_chart(type_chart, use_container_width=True)
