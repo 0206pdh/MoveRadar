@@ -155,7 +155,7 @@ FROM KOREA_REAL_ESTATE_APARTMENT_MARKET_INTELLIGENCE.HACKATHON_2026.REGION_POPUL
 WHERE MOVEMENT_TYPE = '전입'
   AND REGION_LEVEL = 'sgg'
   AND SD = '서울'
-  AND YYYYMMDD < '2024-01-01'
+  AND YYYYMMDD < '2023-01-01'
 GROUP BY 1, 2;
 
 -- 1-4. 전입인구 탐지 테이블 (2024~)
@@ -194,8 +194,8 @@ SELECT
     SUM(OPEN_COUNT)                        AS TELECOM_OPEN_COUNT
 FROM SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V01_MONTHLY_REGIONAL_CONTRACT_STATS
 WHERE INSTALL_STATE = '서울'
-  AND YEAR_MONTH >= '2023-01-01'
-  -- ⚠️ 통신 데이터는 25개 구 모두 2023+ 존재 (V01 기준)
+  AND YEAR_MONTH >= '2024-01-01'
+  -- ⚠️ 통신 데이터는 2023년 시작 — train < 2024, detect >= 2024로 overlap 없음
 GROUP BY 1, 2;
 
 -- 1-7. TMAP 교통량 스냅샷 (LLM 컨텍스트 전용 — 이상 탐지 불가)
@@ -239,6 +239,47 @@ HAVING SGG IS NOT NULL;
 
 SELECT * FROM TMAP_SNAPSHOT ORDER BY TOTAL_PROBE_COUNT DESC;
 
+-- 1-8. 카드소비 이사지표 훈련 (가구·가전 + 생활서비스 + 대형마트 합산)
+-- 데이터 시작: 202112 (2021-12) → 훈련 25개월(2021-12~2023-12), 탐지 2024~
+CREATE OR REPLACE TABLE card_timeseries_train AS
+WITH sgg_monthly AS (
+    SELECT
+        TO_DATE(c.STANDARD_YEAR_MONTH::VARCHAR || '01', 'YYYYMMDD') AS TS,
+        m.CITY_KOR_NAME                                              AS REGION_KEY,
+        SUM(COALESCE(c.ELECTRONICS_FURNITURE_SALES, 0)
+          + COALESCE(c.HOME_LIFE_SERVICE_SALES, 0)
+          + COALESCE(c.LARGE_DISCOUNT_STORE_SALES, 0))               AS MOVING_CARD_SALES
+    FROM SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.CARD_SALES_INFO c
+    JOIN SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST m
+        ON c.DISTRICT_CODE::VARCHAR = m.DISTRICT_CODE::VARCHAR
+    WHERE c.PROVINCE_CODE = 11
+    GROUP BY 1, 2
+)
+SELECT TS, REGION_KEY, MOVING_CARD_SALES
+FROM sgg_monthly
+WHERE MOVING_CARD_SALES > 0
+  AND TS < '2024-01-01';
+
+-- 1-9. 카드소비 이사지표 탐지 (2024~)
+CREATE OR REPLACE TABLE card_timeseries_detect AS
+WITH sgg_monthly AS (
+    SELECT
+        TO_DATE(c.STANDARD_YEAR_MONTH::VARCHAR || '01', 'YYYYMMDD') AS TS,
+        m.CITY_KOR_NAME                                              AS REGION_KEY,
+        SUM(COALESCE(c.ELECTRONICS_FURNITURE_SALES, 0)
+          + COALESCE(c.HOME_LIFE_SERVICE_SALES, 0)
+          + COALESCE(c.LARGE_DISCOUNT_STORE_SALES, 0))               AS MOVING_CARD_SALES
+    FROM SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.CARD_SALES_INFO c
+    JOIN SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST m
+        ON c.DISTRICT_CODE::VARCHAR = m.DISTRICT_CODE::VARCHAR
+    WHERE c.PROVINCE_CODE = 11
+    GROUP BY 1, 2
+)
+SELECT TS, REGION_KEY, MOVING_CARD_SALES
+FROM sgg_monthly
+WHERE MOVING_CARD_SALES > 0
+  AND TS >= '2024-01-01';
+
 
 -- ============================================================
 -- VALIDATION 1: 테이블 행수 및 REGION_KEY 확인
@@ -255,6 +296,10 @@ UNION ALL
 SELECT 'telecom_train',  COUNT(*), COUNT(DISTINCT REGION_KEY) FROM telecom_timeseries_train
 UNION ALL
 SELECT 'telecom_detect', COUNT(*), COUNT(DISTINCT REGION_KEY) FROM telecom_timeseries_detect
+UNION ALL
+SELECT 'card_train',     COUNT(*), COUNT(DISTINCT REGION_KEY) FROM card_timeseries_train
+UNION ALL
+SELECT 'card_detect',    COUNT(*), COUNT(DISTINCT REGION_KEY) FROM card_timeseries_detect;
 -- 기대: 모든 row_count > 0, telecom regions 최대 서울 25개 구
 
 -- 통신 REGION_KEY 샘플 (SGG명과 일치하는지 확인)
@@ -345,7 +390,16 @@ CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION telecom_anomaly_model(
     LABEL_COLNAME     => NULL
 );
 
--- 3-4. TMAP 모델 — 데이터 1개월(MONTHS_AVAILABLE=0)으로 학습 불가, 건너뜀
+-- 3-4. 카드소비 이사지표 모델
+CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION card_anomaly_model(
+    INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.card_timeseries_train'),
+    SERIES_COLNAME    => 'REGION_KEY',
+    TIMESTAMP_COLNAME => 'TS',
+    TARGET_COLNAME    => 'MOVING_CARD_SALES',
+    LABEL_COLNAME     => NULL
+);
+
+-- 3-5. TMAP 모델 — 데이터 1개월(MONTHS_AVAILABLE=0)으로 학습 불가, 건너뜀
 
 
 -- ============================================================
@@ -386,7 +440,18 @@ SELECT * FROM TABLE(
     )
 );
 
--- 4-4. TMAP 탐지 — 건너뜀 (데이터 부족)
+-- 4-4. 카드소비 이사지표 이상 탐지
+CREATE OR REPLACE TABLE CARD_ANOMALY_RESULTS AS
+SELECT * FROM TABLE(
+    card_anomaly_model!DETECT_ANOMALIES(
+        INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.card_timeseries_detect'),
+        SERIES_COLNAME    => 'REGION_KEY',
+        TIMESTAMP_COLNAME => 'TS',
+        TARGET_COLNAME    => 'MOVING_CARD_SALES'
+    )
+);
+
+-- 4-5. TMAP 탐지 — 건너뜀 (데이터 부족)
 
 
 -- ============================================================
@@ -403,21 +468,26 @@ FROM POP_ANOMALY_RESULTS
 UNION ALL
 SELECT 'telecom', COUNT(*), SUM(CASE WHEN IS_ANOMALY THEN 1 ELSE 0 END), MIN(PERCENTILE), MAX(PERCENTILE)
 FROM TELECOM_ANOMALY_RESULTS
+UNION ALL
+SELECT 'card', COUNT(*), SUM(CASE WHEN IS_ANOMALY THEN 1 ELSE 0 END), MIN(PERCENTILE), MAX(PERCENTILE)
+FROM CARD_ANOMALY_RESULTS;
 -- 기대: 모든 total > 0, PERCENTILE 범위 0~1
 
 
 -- ============================================================
--- STEP 5: REGION_ALERTS — 3개 신호 통합
+-- STEP 5: REGION_ALERTS — 4개 신호 통합
 USE DATABASE MOVERADAR; USE SCHEMA PUBLIC;
 --
 -- 컬럼 매핑:
 --   PRICE_ANOMALY_RESULTS.SERIES   = "서초구_방배동" (SGG_EMD)
 --   POP_ANOMALY_RESULTS.SERIES     = "서초구" (SGG)
---   TELECOM_ANOMALY_RESULTS.SERIES = "서초구" (SGG, INSTALL_CITY)
+--   TELECOM_ANOMALY_RESULTS.SERIES = "서초구" (SGG)
+--   CARD_ANOMALY_RESULTS.SERIES    = "서초구" (SGG, M_SCCO_MST.CITY_KOR_NAME)
 --
--- COMBINED_SCORE = |price_pct - 0.5| × 2 × 0.50   (시세: 가장 강한 선행 신호)
---                + |pop_pct   - 0.5| × 2 × 0.30   (전입인구: 이사 직접 증거)
+-- COMBINED_SCORE = |price_pct - 0.5| × 2 × 0.40   (시세: 가장 강한 선행 신호)
+--                + |pop_pct   - 0.5| × 2 × 0.25   (전입인구: 이사 직접 증거)
 --                + |tc_pct    - 0.5| × 2 × 0.20   (통신개통: 실제 입주 증거)
+--                + |card_pct  - 0.5| × 2 × 0.15   (카드소비: 이사 준비 구매 선행 신호)
 --
 -- 경보 임계값: PERCENTILE > 0.75 (급등) 또는 < 0.25 (급락)
 -- ============================================================
@@ -430,13 +500,13 @@ WITH base AS (
         SPLIT_PART(p.SERIES, '_', 2)                               AS EMD,
         p.TS                                                        AS ALERT_DATE,
 
-        -- 시세 신호 (가중치 0.50)
+        -- 시세 신호 (가중치 0.40)
         p.PERCENTILE                                                AS PRICE_PERCENTILE,
         p.Y                                                         AS PRICE_ACTUAL,
         p.FORECAST                                                  AS PRICE_FORECAST,
         (p.PERCENTILE > 0.75 OR p.PERCENTILE < 0.25)              AS PRICE_IS_ANOMALY,
 
-        -- 전입인구 신호 (가중치 0.30)
+        -- 전입인구 신호 (가중치 0.25)
         COALESCE(pop.PERCENTILE, 0.5)                              AS POP_PERCENTILE,
         pop.Y                                                       AS POP_ACTUAL,
         pop.FORECAST                                                AS POP_FORECAST,
@@ -450,18 +520,29 @@ WITH base AS (
         (COALESCE(tc.PERCENTILE, 0.5) > 0.75
          OR COALESCE(tc.PERCENTILE, 0.5) < 0.25)                  AS TELECOM_IS_ANOMALY,
 
+        -- 카드소비 이사지표 신호 (가중치 0.15)
+        COALESCE(cd.PERCENTILE, 0.5)                               AS CARD_PERCENTILE,
+        cd.Y                                                        AS CARD_ACTUAL,
+        cd.FORECAST                                                 AS CARD_FORECAST,
+        (COALESCE(cd.PERCENTILE, 0.5) > 0.75
+         OR COALESCE(cd.PERCENTILE, 0.5) < 0.25)                  AS CARD_IS_ANOMALY,
+
         -- 결합 점수 (높을수록 이상도 강함, max=1.0)
-        (ABS(p.PERCENTILE - 0.5) * 2 * 0.50
-         + ABS(COALESCE(pop.PERCENTILE, 0.5) - 0.5) * 2 * 0.30
-         + ABS(COALESCE(tc.PERCENTILE,  0.5) - 0.5) * 2 * 0.20) AS COMBINED_SCORE
+        (ABS(p.PERCENTILE - 0.5) * 2 * 0.40
+         + ABS(COALESCE(pop.PERCENTILE, 0.5) - 0.5) * 2 * 0.25
+         + ABS(COALESCE(tc.PERCENTILE,  0.5) - 0.5) * 2 * 0.20
+         + ABS(COALESCE(cd.PERCENTILE,  0.5) - 0.5) * 2 * 0.15) AS COMBINED_SCORE
     FROM PRICE_ANOMALY_RESULTS p
     LEFT JOIN POP_ANOMALY_RESULTS pop
         ON SPLIT_PART(p.SERIES, '_', 1) = pop.SERIES AND p.TS = pop.TS
     LEFT JOIN TELECOM_ANOMALY_RESULTS tc
         ON SPLIT_PART(p.SERIES, '_', 1) = tc.SERIES AND p.TS = tc.TS
+    LEFT JOIN CARD_ANOMALY_RESULTS cd
+        ON SPLIT_PART(p.SERIES, '_', 1) = cd.SERIES AND p.TS = cd.TS
     WHERE (p.PERCENTILE > 0.75 OR p.PERCENTILE < 0.25)
        OR (COALESCE(pop.PERCENTILE, 0.5) > 0.75 OR COALESCE(pop.PERCENTILE, 0.5) < 0.25)
        OR (COALESCE(tc.PERCENTILE,  0.5) > 0.75 OR COALESCE(tc.PERCENTILE,  0.5) < 0.25)
+       OR (COALESCE(cd.PERCENTILE,  0.5) > 0.75 OR COALESCE(cd.PERCENTILE,  0.5) < 0.25)
 )
 SELECT
     b.*,
@@ -470,13 +551,21 @@ SELECT
     cp.DOMINANT_AGE_GROUP,
     cp.INCOME_PROFILE,
     CASE
+        WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY AND b.TELECOM_IS_ANOMALY AND b.CARD_IS_ANOMALY THEN '4중 동시 경보'
         WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY AND b.TELECOM_IS_ANOMALY THEN '3중 동시 경보'
+        WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY AND b.CARD_IS_ANOMALY    THEN '시세+전입인구+카드 경보'
+        WHEN b.PRICE_IS_ANOMALY AND b.TELECOM_IS_ANOMALY AND b.CARD_IS_ANOMALY THEN '시세+통신+카드 경보'
+        WHEN b.POP_IS_ANOMALY AND b.TELECOM_IS_ANOMALY AND b.CARD_IS_ANOMALY  THEN '전입인구+통신+카드 경보'
         WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY                          THEN '시세+전입인구 경보'
         WHEN b.PRICE_IS_ANOMALY AND b.TELECOM_IS_ANOMALY                      THEN '시세+통신 경보'
+        WHEN b.PRICE_IS_ANOMALY AND b.CARD_IS_ANOMALY                         THEN '시세+카드 경보'
         WHEN b.POP_IS_ANOMALY   AND b.TELECOM_IS_ANOMALY                      THEN '전입인구+통신 경보'
+        WHEN b.POP_IS_ANOMALY   AND b.CARD_IS_ANOMALY                         THEN '전입인구+카드 경보'
+        WHEN b.TELECOM_IS_ANOMALY AND b.CARD_IS_ANOMALY                       THEN '통신+카드 경보'
         WHEN b.PRICE_IS_ANOMALY                                                THEN '시세 경보'
         WHEN b.POP_IS_ANOMALY                                                  THEN '전입인구 경보'
         WHEN b.TELECOM_IS_ANOMALY                                              THEN '통신 경보'
+        WHEN b.CARD_IS_ANOMALY                                                 THEN '카드소비 경보'
     END                                                                        AS ALERT_TYPE
 FROM base b
 LEFT JOIN SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST m
@@ -609,8 +698,9 @@ SELECT
     r.ALERT_TYPE,
     ROUND(r.COMBINED_SCORE, 3)              AS COMBINED_SCORE,
     ROUND(r.PRICE_PERCENTILE, 3)            AS PRICE_SCORE,
-    ROUND(r.POP_PERCENTILE, 3)              AS POP_SCORE,
-    ROUND(r.TELECOM_PERCENTILE, 3)          AS TELECOM_SCORE,
+    ROUND(r.POP_PERCENTILE, 3)             AS POP_SCORE,
+    ROUND(r.TELECOM_PERCENTILE, 3)         AS TELECOM_SCORE,
+    ROUND(r.CARD_PERCENTILE, 3)            AS CARD_SCORE,
     r.DOMINANT_AGE_GROUP,
     r.INCOME_PROFILE,
     tr.rental_products                      AS TRENDING_RENTALS,
@@ -622,6 +712,19 @@ SELECT
             ),
             OBJECT_CONSTRUCT('role', 'user', 'content',
                 CASE
+                    WHEN r.ALERT_TYPE = '4중 동시 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
+
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
+[경보강도] 4중 동시 이상 (시세·전입인구·통신·카드소비 ALL 경보)
+[시장신호] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile / 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile / 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile / 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile
+[수요강도] ' || COALESCE(lc.call_context, '전 카테고리 문의 급증') || '
+[교통상황] ' || COALESCE(tm.TRAFFIC_STATUS, '정보 없음') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 이달 개통 시 렌탈 0원 + 기가 인터넷 결합
+[금지] 설명 문장, 큰따옴표, 부가 설명 금지. 문구만.'
+
                     WHEN r.ALERT_TYPE = '3중 동시 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
@@ -634,6 +737,40 @@ SELECT
 [인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
 [서비스] 이달 개통 시 렌탈 0원 + 기가 인터넷 결합
 [금지] 설명 문장, 큰따옴표, 부가 설명 금지. 문구만.'
+
+                    WHEN r.ALERT_TYPE = '시세+전입인구+카드 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
+
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
+[경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile · 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile · 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile 동시 급등
+[수요강도] ' || COALESCE(lc.call_context, '이사 준비 구매 급증') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 이사 전 렌탈 사전 예약 + 기가 인터넷 결합 할인
+[조건] 이사 준비 단계 소비 언급 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
+
+                    WHEN r.ALERT_TYPE = '시세+통신+카드 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
+
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
+[경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile · 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile · 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile 동시 급등
+[수요강도] ' || COALESCE(lc.call_context, '프리미엄 개통·구매 문의 급증') || '
+[서비스] 기가 인터넷 당일 개통 + 프리미엄 렌탈 결합 특가
+[조건] 프리미엄·빠른 설치 강조 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
+
+                    WHEN r.ALERT_TYPE = '전입인구+통신+카드 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
+
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
+[경보강도] 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile · 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile · 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile 동시 급증
+[수요강도] ' || COALESCE(lc.call_context, '입주 완료·가전 구매 동시 증가') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 입주 완료 고객 인터넷+렌탈 결합 월 최대 30% 할인
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
                     WHEN r.ALERT_TYPE = '시세+전입인구 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
@@ -657,6 +794,18 @@ SELECT
 [조건] 인터넷 개통 언급 필수
 [금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
+                    WHEN r.ALERT_TYPE = '시세+카드 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
+
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중고소득') || '
+[경보강도] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile 급등 + 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile (가전·가구 구매 급증)
+[수요강도] ' || COALESCE(lc.call_context, '이사 준비 소비 증가') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 이사 전 렌탈 사전 계약 + 기가 인터넷 조기 개통 특가
+[조건] 이사 준비 시점 강조 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
+
                     WHEN r.ALERT_TYPE = '전입인구+통신 경보' THEN
                         '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
 
@@ -666,6 +815,30 @@ SELECT
 [수요강도] ' || COALESCE(lc.call_context, '렌탈 문의 증가') || '
 [인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
 [서비스] 인터넷+렌탈 결합 월 최대 30% 할인
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
+
+                    WHEN r.ALERT_TYPE = '전입인구+카드 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
+
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
+[경보강도] 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile 급증 + 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile (생활가전 구매 증가)
+[수요강도] ' || COALESCE(lc.call_context, '이사 고객 문의 증가') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 입주 축하 렌탈+인터넷 동시 신청 시 첫 달 무료
+[조건] 새 생활 시작 감성 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
+
+                    WHEN r.ALERT_TYPE = '통신+카드 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
+
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
+[경보강도] 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile · 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile 동시 급증 (입주 완료 확정 신호)
+[수요강도] ' || COALESCE(lc.call_context, '개통·렌탈 동시 문의 증가') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 인터넷 개통 완료 고객 렌탈 즉시 설치 특가
+[조건] 입주 완료 직후 시점 강조 필수
 [금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
                     WHEN r.ALERT_TYPE = '시세 경보' THEN
@@ -689,6 +862,18 @@ SELECT
 [인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
 [서비스] 이사 고객 인터넷+렌탈 동시 특가
 [조건] 새집 시작 감성 필수
+[금지] 설명 문장, 큰따옴표 금지. 문구만.'
+
+                    WHEN r.ALERT_TYPE = '카드소비 경보' THEN
+                        '아래 조건에 맞는 이사 고객용 광고 문구를 1줄로 작성하세요.
+
+[지역] ' || r.SGG || ' ' || r.EMD || ' (' || LEFT(r.ALERT_DATE::VARCHAR, 7) || ')
+[고객] ' || COALESCE(r.DOMINANT_AGE_GROUP, '30-40대') || ' / ' || COALESCE(r.INCOME_PROFILE, '중소득') || '
+[경보강도] 카드소비 상위 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile (가전·가구·할인점 소비 급증 = 이사 준비 선행 신호)
+[수요강도] ' || COALESCE(lc.call_context, '이사 준비 구매 증가') || '
+[인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
+[서비스] 이사 준비 고객 렌탈 사전 예약 + 인터넷 결합 할인
+[조건] 이사 준비 단계·사전 계약 혜택 강조 필수
 [금지] 설명 문장, 큰따옴표 금지. 문구만.'
 
                     ELSE
@@ -751,18 +936,26 @@ SELECT
     'telecom',
     Y, FORECAST, PERCENTILE, IS_ANOMALY
 FROM TELECOM_ANOMALY_RESULTS
+UNION ALL
+SELECT
+    SERIES, SERIES, NULL, TS,
+    'card',
+    Y, FORECAST, PERCENTILE, IS_ANOMALY
+FROM CARD_ANOMALY_RESULTS;
 
 -- 7-2. SGG 요약 (대시보드 상단 KPI용)
 CREATE OR REPLACE TABLE SGG_SUMMARY AS
 SELECT
     SGG,
-    COUNT(*)                                                    AS TOTAL_ALERTS,
+    COUNT(*)                                                          AS TOTAL_ALERTS,
+    SUM(CASE WHEN ALERT_TYPE = '4중 동시 경보'    THEN 1 ELSE 0 END) AS QUAD_ALERTS,
     SUM(CASE WHEN ALERT_TYPE = '3중 동시 경보'    THEN 1 ELSE 0 END) AS TRIPLE_ALERTS,
     SUM(CASE WHEN ALERT_TYPE LIKE '%시세%'        THEN 1 ELSE 0 END) AS PRICE_ALERTS,
     SUM(CASE WHEN ALERT_TYPE LIKE '%전입인구%'    THEN 1 ELSE 0 END) AS POP_ALERTS,
     SUM(CASE WHEN ALERT_TYPE LIKE '%통신%'        THEN 1 ELSE 0 END) AS TELECOM_ALERTS,
-    ROUND(MAX(COMBINED_SCORE), 3)                               AS MAX_SCORE,
-    ROUND(AVG(COMBINED_SCORE), 3)                               AS AVG_SCORE
+    SUM(CASE WHEN ALERT_TYPE LIKE '%카드%'        THEN 1 ELSE 0 END) AS CARD_ALERTS,
+    ROUND(MAX(COMBINED_SCORE), 3)                                     AS MAX_SCORE,
+    ROUND(AVG(COMBINED_SCORE), 3)                                     AS AVG_SCORE
 FROM REGION_ALERTS
 GROUP BY 1;
 
