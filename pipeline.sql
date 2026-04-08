@@ -118,8 +118,16 @@ ORDER BY 2 DESC;
 USE DATABASE MOVERADAR;
 USE SCHEMA PUBLIC;
 
--- 1-1. 시세 훈련 테이블 (2021~2023, 서울 전체)
-CREATE OR REPLACE TABLE price_timeseries_train_view AS
+-- ============================================================
+-- 시세 신호: 2개 그룹으로 분리 훈련 (구별 데이터 가용 기간 차이)
+--   그룹A (22개 구): 마켓플레이스 데이터 2023까지만 제공
+--                   훈련 ~2022, 탐지 2023~
+--   그룹B (영등포·서초·중구): 2024 데이터 추가 제공
+--                   훈련 ~2023, 탐지 2024~
+-- → 2개 모델 학습 후 PRICE_ANOMALY_RESULTS 에 UNION ALL
+-- ============================================================
+-- 1-1a. 시세 훈련 A (22개 구, ~2022)
+CREATE OR REPLACE TABLE price_train_22sgg AS
 SELECT
     YYYYMMDD::DATE                        AS TS,
     SGG || '_' || EMD                     AS REGION_KEY,
@@ -128,11 +136,26 @@ SELECT
 FROM KOREA_REAL_ESTATE_APARTMENT_MARKET_INTELLIGENCE.HACKATHON_2026.REGION_APT_RICHGO_MARKET_PRICE_M_H
 WHERE REGION_LEVEL = 'emd'
   AND SD = '서울'
+  AND SGG NOT IN ('영등포구', '서초구', '중구')
+  AND YYYYMMDD::DATE < '2023-01-01'
+GROUP BY 1, 2, 3;
+
+-- 1-1b. 시세 훈련 B (영등포·서초·중구, ~2023)
+CREATE OR REPLACE TABLE price_train_3sgg AS
+SELECT
+    YYYYMMDD::DATE                        AS TS,
+    SGG || '_' || EMD                     AS REGION_KEY,
+    SGG,
+    AVG(MEME_PRICE_PER_SUPPLY_PYEONG)    AS MEME_PRICE_PER_M2
+FROM KOREA_REAL_ESTATE_APARTMENT_MARKET_INTELLIGENCE.HACKATHON_2026.REGION_APT_RICHGO_MARKET_PRICE_M_H
+WHERE REGION_LEVEL = 'emd'
+  AND SD = '서울'
+  AND SGG IN ('영등포구', '서초구', '중구')
   AND YYYYMMDD::DATE < '2024-01-01'
 GROUP BY 1, 2, 3;
 
--- 1-2. 시세 탐지 테이블 (2024~)
-CREATE OR REPLACE TABLE price_timeseries_detect_view AS
+-- 1-2a. 시세 탐지 A (22개 구, 2023~)
+CREATE OR REPLACE TABLE price_detect_22sgg AS
 SELECT
     YYYYMMDD::DATE                        AS TS,
     SGG || '_' || EMD                     AS REGION_KEY,
@@ -141,9 +164,27 @@ SELECT
 FROM KOREA_REAL_ESTATE_APARTMENT_MARKET_INTELLIGENCE.HACKATHON_2026.REGION_APT_RICHGO_MARKET_PRICE_M_H
 WHERE REGION_LEVEL = 'emd'
   AND SD = '서울'
+  AND SGG NOT IN ('영등포구', '서초구', '중구')
   AND YYYYMMDD::DATE >= '2023-01-01'
-  -- ⚠️ 서울 25개 구 중 2024 데이터 없는 구는 2023 데이터로 탐지됨 (정상)
 GROUP BY 1, 2, 3;
+
+-- 1-2b. 시세 탐지 B (영등포·서초·중구, 2024~)
+CREATE OR REPLACE TABLE price_detect_3sgg AS
+SELECT
+    YYYYMMDD::DATE                        AS TS,
+    SGG || '_' || EMD                     AS REGION_KEY,
+    SGG,
+    AVG(MEME_PRICE_PER_SUPPLY_PYEONG)    AS MEME_PRICE_PER_M2
+FROM KOREA_REAL_ESTATE_APARTMENT_MARKET_INTELLIGENCE.HACKATHON_2026.REGION_APT_RICHGO_MARKET_PRICE_M_H
+WHERE REGION_LEVEL = 'emd'
+  AND SD = '서울'
+  AND SGG IN ('영등포구', '서초구', '중구')
+  AND YYYYMMDD::DATE >= '2024-01-01'
+GROUP BY 1, 2, 3;
+
+-- (구 버전 호환용 alias — STEP 4 이하에서 참조)
+CREATE OR REPLACE TABLE price_timeseries_train_view AS SELECT * FROM price_train_22sgg UNION ALL SELECT * FROM price_train_3sgg;
+CREATE OR REPLACE TABLE price_timeseries_detect_view AS SELECT * FROM price_detect_22sgg UNION ALL SELECT * FROM price_detect_3sgg;
 
 -- 1-3. 전입인구 훈련 테이블 (SGG 단위, 2021~2023)
 CREATE OR REPLACE TABLE pop_timeseries_train_view AS
@@ -240,7 +281,7 @@ HAVING SGG IS NOT NULL;
 SELECT * FROM TMAP_SNAPSHOT ORDER BY TOTAL_PROBE_COUNT DESC;
 
 -- 1-8. 카드소비 이사지표 훈련 (가구·가전 + 생활서비스 + 대형마트 합산)
--- 데이터 시작: 202112 (2021-12) → 훈련 25개월(2021-12~2023-12), 탐지 2024~
+-- 훈련 ~2022, 탐지 2023~ (no overlap, CARD_SALES_INFO 2024 미제공)
 CREATE OR REPLACE TABLE card_timeseries_train AS
 WITH sgg_monthly AS (
     SELECT
@@ -258,9 +299,9 @@ WITH sgg_monthly AS (
 SELECT TS, REGION_KEY, MOVING_CARD_SALES
 FROM sgg_monthly
 WHERE MOVING_CARD_SALES > 0
-  AND TS < '2024-01-01';
+  AND TS < '2023-01-01';
 
--- 1-9. 카드소비 이사지표 탐지 (2024~)
+-- 1-9. 카드소비 이사지표 탐지 (2023~)
 CREATE OR REPLACE TABLE card_timeseries_detect AS
 WITH sgg_monthly AS (
     SELECT
@@ -278,16 +319,20 @@ WITH sgg_monthly AS (
 SELECT TS, REGION_KEY, MOVING_CARD_SALES
 FROM sgg_monthly
 WHERE MOVING_CARD_SALES > 0
-  AND TS >= '2024-01-01';
+  AND TS >= '2023-01-01';
 
 
 -- ============================================================
 -- VALIDATION 1: 테이블 행수 및 REGION_KEY 확인
 -- ============================================================
 
-SELECT 'price_train'    AS tbl, COUNT(*) AS row_count, COUNT(DISTINCT REGION_KEY) AS regions FROM price_timeseries_train_view
+SELECT 'price_train_22' AS tbl, COUNT(*) AS row_count, COUNT(DISTINCT REGION_KEY) AS regions FROM price_train_22sgg
 UNION ALL
-SELECT 'price_detect',   COUNT(*), COUNT(DISTINCT REGION_KEY) FROM price_timeseries_detect_view
+SELECT 'price_train_3',  COUNT(*), COUNT(DISTINCT REGION_KEY) FROM price_train_3sgg
+UNION ALL
+SELECT 'price_detect_22',COUNT(*), COUNT(DISTINCT REGION_KEY) FROM price_detect_22sgg
+UNION ALL
+SELECT 'price_detect_3', COUNT(*), COUNT(DISTINCT REGION_KEY) FROM price_detect_3sgg
 UNION ALL
 SELECT 'pop_train',      COUNT(*), COUNT(DISTINCT REGION_KEY) FROM pop_timeseries_train_view
 UNION ALL
@@ -358,14 +403,24 @@ SELECT * FROM customer_profile_view LIMIT 5;
 
 
 -- ============================================================
--- STEP 3: Cortex Anomaly Detection 모델 학습 (3개)
+-- STEP 3: Cortex Anomaly Detection 모델 학습 (5개)
 -- ⚠️ 수 분 걸림 — 완료 확인 후 다음 진행
+-- 시세는 그룹별 2개 모델 분리 (훈련 기간이 구마다 다름)
 -- ============================================================
 USE DATABASE MOVERADAR; USE SCHEMA PUBLIC;
 
--- 3-1. 시세 모델
-CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION price_anomaly_model(
-    INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.price_timeseries_train_view'),
+-- 3-1a. 시세 모델 A (22개 구, 훈련 ~2022)
+CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION price_anomaly_model_22(
+    INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.price_train_22sgg'),
+    SERIES_COLNAME    => 'REGION_KEY',
+    TIMESTAMP_COLNAME => 'TS',
+    TARGET_COLNAME    => 'MEME_PRICE_PER_M2',
+    LABEL_COLNAME     => NULL
+);
+
+-- 3-1b. 시세 모델 B (영등포·서초·중구, 훈련 ~2023)
+CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION price_anomaly_model_3(
+    INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.price_train_3sgg'),
     SERIES_COLNAME    => 'REGION_KEY',
     TIMESTAMP_COLNAME => 'TS',
     TARGET_COLNAME    => 'MEME_PRICE_PER_M2',
@@ -407,11 +462,20 @@ CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION card_anomaly_model(
 -- ============================================================
 USE DATABASE MOVERADAR; USE SCHEMA PUBLIC;
 
--- 4-1. 시세 이상 탐지
+-- 4-1. 시세 이상 탐지 (2개 그룹 각각 탐지 후 UNION ALL)
 CREATE OR REPLACE TABLE PRICE_ANOMALY_RESULTS AS
 SELECT * FROM TABLE(
-    price_anomaly_model!DETECT_ANOMALIES(
-        INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.price_timeseries_detect_view'),
+    price_anomaly_model_22!DETECT_ANOMALIES(
+        INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.price_detect_22sgg'),
+        SERIES_COLNAME    => 'REGION_KEY',
+        TIMESTAMP_COLNAME => 'TS',
+        TARGET_COLNAME    => 'MEME_PRICE_PER_M2'
+    )
+)
+UNION ALL
+SELECT * FROM TABLE(
+    price_anomaly_model_3!DETECT_ANOMALIES(
+        INPUT_DATA        => SYSTEM$REFERENCE('TABLE', 'MOVERADAR.PUBLIC.price_detect_3sgg'),
         SERIES_COLNAME    => 'REGION_KEY',
         TIMESTAMP_COLNAME => 'TS',
         TARGET_COLNAME    => 'MEME_PRICE_PER_M2'
@@ -493,63 +557,96 @@ USE DATABASE MOVERADAR; USE SCHEMA PUBLIC;
 -- ============================================================
 
 CREATE OR REPLACE TABLE REGION_ALERTS AS
-WITH base AS (
+WITH
+-- 시세: EMD 단위 → SGG 단위 집계 (25개 구 전역 커버 위해)
+price_sgg AS (
     SELECT
-        p.SERIES                                                    AS REGION_KEY,
-        SPLIT_PART(p.SERIES, '_', 1)                               AS SGG,
-        SPLIT_PART(p.SERIES, '_', 2)                               AS EMD,
-        p.TS                                                        AS ALERT_DATE,
+        SPLIT_PART(SERIES, '_', 1)                                      AS SGG,
+        TS,
+        AVG(PERCENTILE)                                                  AS PRICE_PERCENTILE,
+        AVG(Y)                                                           AS PRICE_ACTUAL,
+        AVG(FORECAST)                                                    AS PRICE_FORECAST,
+        MAX(CASE WHEN PERCENTILE > 0.75 OR PERCENTILE < 0.25 THEN 1 ELSE 0 END) = 1
+                                                                         AS PRICE_IS_ANOMALY
+    FROM PRICE_ANOMALY_RESULTS
+    GROUP BY 1, 2
+),
+-- 구별 대표 폴리곤 (동 단위 중 DISTRICT_CODE 최솟값 기준 1개)
+geom_sgg AS (
+    SELECT DISTINCT
+        CITY_KOR_NAME                                                    AS SGG,
+        FIRST_VALUE(DISTRICT_CODE) OVER (
+            PARTITION BY CITY_KOR_NAME ORDER BY DISTRICT_CODE)          AS DISTRICT_CODE,
+        FIRST_VALUE(DISTRICT_GEOM) OVER (
+            PARTITION BY CITY_KOR_NAME ORDER BY DISTRICT_CODE)          AS DISTRICT_GEOM
+    FROM SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST
+    WHERE DISTRICT_KOR_NAME IS NOT NULL
+),
+-- 구별 프로파일 집계 (연령대·소득 분포)
+profile_sgg AS (
+    SELECT DISTINCT
+        SGG,
+        FIRST_VALUE(DOMINANT_AGE_GROUP) OVER (
+            PARTITION BY SGG ORDER BY DISTRICT_CODE)                    AS DOMINANT_AGE_GROUP,
+        FIRST_VALUE(INCOME_PROFILE) OVER (
+            PARTITION BY SGG ORDER BY DISTRICT_CODE)                    AS INCOME_PROFILE
+    FROM customer_profile_view
+),
+base AS (
+    SELECT
+        pop.SERIES                                                       AS REGION_KEY,
+        pop.SERIES                                                       AS SGG,
+        pop.TS                                                           AS ALERT_DATE,
 
-        -- 시세 신호 (가중치 0.40)
-        p.PERCENTILE                                                AS PRICE_PERCENTILE,
-        p.Y                                                         AS PRICE_ACTUAL,
-        p.FORECAST                                                  AS PRICE_FORECAST,
-        (p.PERCENTILE > 0.75 OR p.PERCENTILE < 0.25)              AS PRICE_IS_ANOMALY,
+        -- 시세 신호 (가중치 0.40, 데이터 없는 구는 중립 0.5)
+        COALESCE(p.PRICE_PERCENTILE, 0.5)                               AS PRICE_PERCENTILE,
+        p.PRICE_ACTUAL                                                   AS PRICE_ACTUAL,
+        p.PRICE_FORECAST                                                 AS PRICE_FORECAST,
+        COALESCE(p.PRICE_IS_ANOMALY, FALSE)                             AS PRICE_IS_ANOMALY,
 
         -- 전입인구 신호 (가중치 0.25)
-        COALESCE(pop.PERCENTILE, 0.5)                              AS POP_PERCENTILE,
-        pop.Y                                                       AS POP_ACTUAL,
-        pop.FORECAST                                                AS POP_FORECAST,
-        (COALESCE(pop.PERCENTILE, 0.5) > 0.75
-         OR COALESCE(pop.PERCENTILE, 0.5) < 0.25)                 AS POP_IS_ANOMALY,
+        pop.PERCENTILE                                                   AS POP_PERCENTILE,
+        pop.Y                                                            AS POP_ACTUAL,
+        pop.FORECAST                                                     AS POP_FORECAST,
+        (pop.PERCENTILE > 0.75 OR pop.PERCENTILE < 0.25)                AS POP_IS_ANOMALY,
 
         -- 통신 개통 신호 (가중치 0.20)
-        COALESCE(tc.PERCENTILE, 0.5)                               AS TELECOM_PERCENTILE,
-        tc.Y                                                        AS TELECOM_ACTUAL,
-        tc.FORECAST                                                 AS TELECOM_FORECAST,
+        COALESCE(tc.PERCENTILE, 0.5)                                    AS TELECOM_PERCENTILE,
+        tc.Y                                                             AS TELECOM_ACTUAL,
+        tc.FORECAST                                                      AS TELECOM_FORECAST,
         (COALESCE(tc.PERCENTILE, 0.5) > 0.75
-         OR COALESCE(tc.PERCENTILE, 0.5) < 0.25)                  AS TELECOM_IS_ANOMALY,
+         OR COALESCE(tc.PERCENTILE, 0.5) < 0.25)                        AS TELECOM_IS_ANOMALY,
 
         -- 카드소비 이사지표 신호 (가중치 0.15)
-        COALESCE(cd.PERCENTILE, 0.5)                               AS CARD_PERCENTILE,
-        cd.Y                                                        AS CARD_ACTUAL,
-        cd.FORECAST                                                 AS CARD_FORECAST,
+        COALESCE(cd.PERCENTILE, 0.5)                                    AS CARD_PERCENTILE,
+        cd.Y                                                             AS CARD_ACTUAL,
+        cd.FORECAST                                                      AS CARD_FORECAST,
         (COALESCE(cd.PERCENTILE, 0.5) > 0.75
-         OR COALESCE(cd.PERCENTILE, 0.5) < 0.25)                  AS CARD_IS_ANOMALY,
+         OR COALESCE(cd.PERCENTILE, 0.5) < 0.25)                        AS CARD_IS_ANOMALY,
 
         -- 결합 점수 (높을수록 이상도 강함, max=1.0)
-        (ABS(p.PERCENTILE - 0.5) * 2 * 0.40
-         + ABS(COALESCE(pop.PERCENTILE, 0.5) - 0.5) * 2 * 0.25
-         + ABS(COALESCE(tc.PERCENTILE,  0.5) - 0.5) * 2 * 0.20
-         + ABS(COALESCE(cd.PERCENTILE,  0.5) - 0.5) * 2 * 0.15) AS COMBINED_SCORE
-    FROM PRICE_ANOMALY_RESULTS p
-    LEFT JOIN POP_ANOMALY_RESULTS pop
-        ON SPLIT_PART(p.SERIES, '_', 1) = pop.SERIES AND p.TS = pop.TS
+        (ABS(COALESCE(p.PRICE_PERCENTILE, 0.5) - 0.5) * 2 * 0.40
+         + ABS(pop.PERCENTILE - 0.5)                   * 2 * 0.25
+         + ABS(COALESCE(tc.PERCENTILE, 0.5) - 0.5)    * 2 * 0.20
+         + ABS(COALESCE(cd.PERCENTILE, 0.5) - 0.5)    * 2 * 0.15)      AS COMBINED_SCORE
+    FROM POP_ANOMALY_RESULTS pop
+    LEFT JOIN price_sgg p
+        ON pop.SERIES = p.SGG AND pop.TS = p.TS
     LEFT JOIN TELECOM_ANOMALY_RESULTS tc
-        ON SPLIT_PART(p.SERIES, '_', 1) = tc.SERIES AND p.TS = tc.TS
+        ON pop.SERIES = tc.SERIES AND pop.TS = tc.TS
     LEFT JOIN CARD_ANOMALY_RESULTS cd
-        ON SPLIT_PART(p.SERIES, '_', 1) = cd.SERIES AND p.TS = cd.TS
-    WHERE (p.PERCENTILE > 0.75 OR p.PERCENTILE < 0.25)
-       OR (COALESCE(pop.PERCENTILE, 0.5) > 0.75 OR COALESCE(pop.PERCENTILE, 0.5) < 0.25)
-       OR (COALESCE(tc.PERCENTILE,  0.5) > 0.75 OR COALESCE(tc.PERCENTILE,  0.5) < 0.25)
-       OR (COALESCE(cd.PERCENTILE,  0.5) > 0.75 OR COALESCE(cd.PERCENTILE,  0.5) < 0.25)
+        ON pop.SERIES = cd.SERIES AND pop.TS = cd.TS
+    WHERE COALESCE(p.PRICE_IS_ANOMALY, FALSE)
+       OR (pop.PERCENTILE > 0.75 OR pop.PERCENTILE < 0.25)
+       OR (COALESCE(tc.PERCENTILE, 0.5) > 0.75 OR COALESCE(tc.PERCENTILE, 0.5) < 0.25)
+       OR (COALESCE(cd.PERCENTILE, 0.5) > 0.75 OR COALESCE(cd.PERCENTILE, 0.5) < 0.25)
 )
 SELECT
     b.*,
-    m.DISTRICT_CODE,
-    m.DISTRICT_GEOM,
-    cp.DOMINANT_AGE_GROUP,
-    cp.INCOME_PROFILE,
+    g.DISTRICT_CODE,
+    g.DISTRICT_GEOM,
+    pr.DOMINANT_AGE_GROUP,
+    pr.INCOME_PROFILE,
     CASE
         WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY AND b.TELECOM_IS_ANOMALY AND b.CARD_IS_ANOMALY THEN '4중 동시 경보'
         WHEN b.PRICE_IS_ANOMALY AND b.POP_IS_ANOMALY AND b.TELECOM_IS_ANOMALY THEN '3중 동시 경보'
@@ -568,10 +665,8 @@ SELECT
         WHEN b.CARD_IS_ANOMALY                                                 THEN '카드소비 경보'
     END                                                                        AS ALERT_TYPE
 FROM base b
-LEFT JOIN SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST m
-    ON (m.CITY_KOR_NAME || '_' || m.DISTRICT_KOR_NAME) = b.REGION_KEY
-LEFT JOIN customer_profile_view cp
-    ON b.REGION_KEY = cp.REGION_KEY;
+LEFT JOIN geom_sgg g   ON b.SGG = g.SGG
+LEFT JOIN profile_sgg pr ON b.SGG = pr.SGG;
 
 
 -- ============================================================
