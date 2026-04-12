@@ -170,7 +170,7 @@ with tab1:
                 )
                 .properties(height=520)
             )
-            st.altair_chart(bar, use_container_width=True)
+            st.altair_chart(bar, width='stretch')
 
         # 신호별 점수 분포 (4개 신호)
         st.subheader("4개 신호 점수 분포")
@@ -194,7 +194,7 @@ with tab1:
             )
             .properties(height=220)
         )
-        st.altair_chart(violin, use_container_width=True)
+        st.altair_chart(violin, width='stretch')
 
     with col_detail:
         st.subheader("지역 상세 & 마케팅 문구")
@@ -246,7 +246,7 @@ with tab1:
             "DOMINANT_AGE_GROUP", "INCOME_PROFILE"
         ]].copy()
         disp.columns = ["지역", "기준월", "경보유형", "결합점수", "시세", "전입인구", "통신", "카드소비", "주요연령대", "소득수준"]
-        st.dataframe(disp, use_container_width=True, hide_index=True)
+        st.dataframe(disp, width='stretch', hide_index=True)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -317,7 +317,7 @@ with tab2:
                 ).properties(height=100)
 
                 combined = alt.vconcat(chart, pct_chart).resolve_scale(x="shared")
-                st.altair_chart(combined, use_container_width=True)
+                st.altair_chart(combined, width='stretch')
 
     # SGG 요약 히트맵
     st.divider()
@@ -343,7 +343,7 @@ with tab2:
                 )
                 .properties(height=500, title="구별 신호별 경보 건수 히트맵")
             )
-            st.altair_chart(heatmap, use_container_width=True)
+            st.altair_chart(heatmap, width='stretch')
     except Exception as e:
         st.warning(f"SGG 요약 로드 실패: {e}")
 
@@ -371,8 +371,8 @@ with tab3:
                     )
                     .properties(height=300)
                 )
-                st.altair_chart(rental_chart, use_container_width=True)
-                st.dataframe(rental_df, use_container_width=True, hide_index=True)
+                st.altair_chart(rental_chart, width='stretch')
+                st.dataframe(rental_df, width='stretch', hide_index=True)
         except Exception as e:
             st.warning(f"렌탈 트렌드 로드 실패 (STEP 6a 미실행?): {e}")
 
@@ -392,7 +392,7 @@ with tab3:
                     )
                     .properties(height=200)
                 )
-                st.altair_chart(call_chart, use_container_width=True)
+                st.altair_chart(call_chart, width='stretch')
 
                 st.markdown("**콜→계약 전환율 & 리드타임**")
                 cvr_chart = (
@@ -405,7 +405,7 @@ with tab3:
                     )
                     .properties(height=150)
                 )
-                st.altair_chart(cvr_chart, use_container_width=True)
+                st.altair_chart(cvr_chart, width='stretch')
         except Exception as e:
             st.warning(f"콜센터 데이터 로드 실패: {e}")
 
@@ -426,7 +426,7 @@ with tab3:
                 )
                 .properties(height=280, title=f"{tc_sgg} 월별 통신 개통 현황")
             )
-            st.altair_chart(tc_chart, use_container_width=True)
+            st.altair_chart(tc_chart, width='stretch')
         else:
             st.info("해당 구의 통신 데이터가 없습니다.")
     except Exception as e:
@@ -510,4 +510,4 @@ with tab4:
             )
             .properties(height=400)
         )
-        st.altair_chart(type_chart, use_container_width=True)
+        st.altair_chart(type_chart, width='stretch')

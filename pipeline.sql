@@ -65,50 +65,6 @@ GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 20;
 SELECT * FROM SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V09_MONTHLY_CALL_STATS
 ORDER BY YEAR_MONTH DESC LIMIT 10;
 
--- 0-10. TMAP 서울 교통량 날짜 범위 + 커버리지 확인
--- ⚠️ DATA_DATE 범위가 18개월 미만이면 STEP 1-7/1-8/3-4/4-4 건너뛰고 TMAP을 LLM 컨텍스트 전용으로 사용
-SELECT
-    COUNT(*)           AS total_rows,
-    MIN(DATA_DATE)     AS min_dt,
-    MAX(DATA_DATE)     AS max_dt,
-    DATEDIFF('MONTH', MIN(DATA_DATE), MAX(DATA_DATE)) AS months_available
-FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME;
-
--- 서울 도로명 패턴 커버리지 확인
-SELECT
-    CASE
-        WHEN ROAD_NAME LIKE '%강남%' OR ST_NODE_NAME LIKE '%강남%' OR ED_NODE_NAME LIKE '%강남%' THEN '강남구'
-        WHEN ROAD_NAME LIKE '%서초%' OR ST_NODE_NAME LIKE '%서초%' OR ED_NODE_NAME LIKE '%서초%' THEN '서초구'
-        WHEN ROAD_NAME LIKE '%영등포%' OR ST_NODE_NAME LIKE '%영등포%' OR ED_NODE_NAME LIKE '%영등포%' THEN '영등포구'
-        WHEN ROAD_NAME LIKE '%마포%' OR ST_NODE_NAME LIKE '%마포%' OR ED_NODE_NAME LIKE '%마포%' THEN '마포구'
-        WHEN ROAD_NAME LIKE '%종로%' OR ST_NODE_NAME LIKE '%종로%' OR ED_NODE_NAME LIKE '%종로%' THEN '종로구'
-        WHEN ROAD_NAME LIKE '%중랑%' OR ST_NODE_NAME LIKE '%중랑%' OR ED_NODE_NAME LIKE '%중랑%' THEN '중랑구'
-        WHEN ROAD_NAME LIKE '%중구%' OR ST_NODE_NAME LIKE '%중구%' OR ED_NODE_NAME LIKE '%중구%' THEN '중구'
-        WHEN ROAD_NAME LIKE '%송파%' OR ST_NODE_NAME LIKE '%송파%' OR ED_NODE_NAME LIKE '%송파%' THEN '송파구'
-        WHEN ROAD_NAME LIKE '%강동%' OR ST_NODE_NAME LIKE '%강동%' OR ED_NODE_NAME LIKE '%강동%' THEN '강동구'
-        WHEN ROAD_NAME LIKE '%강서%' OR ST_NODE_NAME LIKE '%강서%' OR ED_NODE_NAME LIKE '%강서%' THEN '강서구'
-        WHEN ROAD_NAME LIKE '%강북%' OR ST_NODE_NAME LIKE '%강북%' OR ED_NODE_NAME LIKE '%강북%' THEN '강북구'
-        WHEN ROAD_NAME LIKE '%노원%' OR ST_NODE_NAME LIKE '%노원%' OR ED_NODE_NAME LIKE '%노원%' THEN '노원구'
-        WHEN ROAD_NAME LIKE '%도봉%' OR ST_NODE_NAME LIKE '%도봉%' OR ED_NODE_NAME LIKE '%도봉%' THEN '도봉구'
-        WHEN ROAD_NAME LIKE '%성북%' OR ST_NODE_NAME LIKE '%성북%' OR ED_NODE_NAME LIKE '%성북%' THEN '성북구'
-        WHEN ROAD_NAME LIKE '%동대문%' OR ST_NODE_NAME LIKE '%동대문%' OR ED_NODE_NAME LIKE '%동대문%' THEN '동대문구'
-        WHEN ROAD_NAME LIKE '%광진%' OR ST_NODE_NAME LIKE '%광진%' OR ED_NODE_NAME LIKE '%광진%' THEN '광진구'
-        WHEN ROAD_NAME LIKE '%성동%' OR ST_NODE_NAME LIKE '%성동%' OR ED_NODE_NAME LIKE '%성동%' THEN '성동구'
-        WHEN ROAD_NAME LIKE '%용산%' OR ST_NODE_NAME LIKE '%용산%' OR ED_NODE_NAME LIKE '%용산%' THEN '용산구'
-        WHEN ROAD_NAME LIKE '%은평%' OR ST_NODE_NAME LIKE '%은평%' OR ED_NODE_NAME LIKE '%은평%' THEN '은평구'
-        WHEN ROAD_NAME LIKE '%서대문%' OR ST_NODE_NAME LIKE '%서대문%' OR ED_NODE_NAME LIKE '%서대문%' THEN '서대문구'
-        WHEN ROAD_NAME LIKE '%동작%' OR ST_NODE_NAME LIKE '%동작%' OR ED_NODE_NAME LIKE '%동작%' THEN '동작구'
-        WHEN ROAD_NAME LIKE '%관악%' OR ST_NODE_NAME LIKE '%관악%' OR ED_NODE_NAME LIKE '%관악%' THEN '관악구'
-        WHEN ROAD_NAME LIKE '%금천%' OR ST_NODE_NAME LIKE '%금천%' OR ED_NODE_NAME LIKE '%금천%' THEN '금천구'
-        WHEN ROAD_NAME LIKE '%구로%' OR ST_NODE_NAME LIKE '%구로%' OR ED_NODE_NAME LIKE '%구로%' THEN '구로구'
-        WHEN ROAD_NAME LIKE '%양천%' OR ST_NODE_NAME LIKE '%양천%' OR ED_NODE_NAME LIKE '%양천%' THEN '양천구'
-        ELSE NULL
-    END AS SGG,
-    COUNT(*) AS row_cnt
-FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME
-GROUP BY 1
-HAVING SGG IS NOT NULL
-ORDER BY 2 DESC;
 
 
 -- ============================================================
@@ -239,48 +195,7 @@ WHERE INSTALL_STATE = '서울'
   -- ⚠️ 통신 데이터는 2023년 시작 — train < 2024, detect >= 2024로 overlap 없음
 GROUP BY 1, 2;
 
--- 1-7. TMAP 교통량 스냅샷 (LLM 컨텍스트 전용 — 이상 탐지 불가)
--- ⚠️ MONTHS_AVAILABLE = 0 (2025-05 1개월 제공): 이상 탐지 대신 현재 구별 교통 상황 컨텍스트로 활용
-CREATE OR REPLACE TABLE TMAP_SNAPSHOT AS
-SELECT
-    CASE
-        WHEN ROAD_NAME LIKE '%강남%' OR ST_NODE_NAME LIKE '%강남%' OR ED_NODE_NAME LIKE '%강남%' THEN '강남구'
-        WHEN ROAD_NAME LIKE '%서초%' OR ST_NODE_NAME LIKE '%서초%' OR ED_NODE_NAME LIKE '%서초%' THEN '서초구'
-        WHEN ROAD_NAME LIKE '%영등포%' OR ST_NODE_NAME LIKE '%영등포%' OR ED_NODE_NAME LIKE '%영등포%' THEN '영등포구'
-        WHEN ROAD_NAME LIKE '%마포%' OR ST_NODE_NAME LIKE '%마포%' OR ED_NODE_NAME LIKE '%마포%' THEN '마포구'
-        WHEN ROAD_NAME LIKE '%종로%' OR ST_NODE_NAME LIKE '%종로%' OR ED_NODE_NAME LIKE '%종로%' THEN '종로구'
-        WHEN ROAD_NAME LIKE '%중랑%' OR ST_NODE_NAME LIKE '%중랑%' OR ED_NODE_NAME LIKE '%중랑%' THEN '중랑구'
-        WHEN ROAD_NAME LIKE '%중구%' OR ST_NODE_NAME LIKE '%중구%' OR ED_NODE_NAME LIKE '%중구%' THEN '중구'
-        WHEN ROAD_NAME LIKE '%송파%' OR ST_NODE_NAME LIKE '%송파%' OR ED_NODE_NAME LIKE '%송파%' THEN '송파구'
-        WHEN ROAD_NAME LIKE '%강동%' OR ST_NODE_NAME LIKE '%강동%' OR ED_NODE_NAME LIKE '%강동%' THEN '강동구'
-        WHEN ROAD_NAME LIKE '%강서%' OR ST_NODE_NAME LIKE '%강서%' OR ED_NODE_NAME LIKE '%강서%' THEN '강서구'
-        WHEN ROAD_NAME LIKE '%강북%' OR ST_NODE_NAME LIKE '%강북%' OR ED_NODE_NAME LIKE '%강북%' THEN '강북구'
-        WHEN ROAD_NAME LIKE '%노원%' OR ST_NODE_NAME LIKE '%노원%' OR ED_NODE_NAME LIKE '%노원%' THEN '노원구'
-        WHEN ROAD_NAME LIKE '%도봉%' OR ST_NODE_NAME LIKE '%도봉%' OR ED_NODE_NAME LIKE '%도봉%' THEN '도봉구'
-        WHEN ROAD_NAME LIKE '%성북%' OR ST_NODE_NAME LIKE '%성북%' OR ED_NODE_NAME LIKE '%성북%' THEN '성북구'
-        WHEN ROAD_NAME LIKE '%동대문%' OR ST_NODE_NAME LIKE '%동대문%' OR ED_NODE_NAME LIKE '%동대문%' THEN '동대문구'
-        WHEN ROAD_NAME LIKE '%광진%' OR ST_NODE_NAME LIKE '%광진%' OR ED_NODE_NAME LIKE '%광진%' THEN '광진구'
-        WHEN ROAD_NAME LIKE '%성동%' OR ST_NODE_NAME LIKE '%성동%' OR ED_NODE_NAME LIKE '%성동%' THEN '성동구'
-        WHEN ROAD_NAME LIKE '%용산%' OR ST_NODE_NAME LIKE '%용산%' OR ED_NODE_NAME LIKE '%용산%' THEN '용산구'
-        WHEN ROAD_NAME LIKE '%은평%' OR ST_NODE_NAME LIKE '%은평%' OR ED_NODE_NAME LIKE '%은평%' THEN '은평구'
-        WHEN ROAD_NAME LIKE '%서대문%' OR ST_NODE_NAME LIKE '%서대문%' OR ED_NODE_NAME LIKE '%서대문%' THEN '서대문구'
-        WHEN ROAD_NAME LIKE '%동작%' OR ST_NODE_NAME LIKE '%동작%' OR ED_NODE_NAME LIKE '%동작%' THEN '동작구'
-        WHEN ROAD_NAME LIKE '%관악%' OR ST_NODE_NAME LIKE '%관악%' OR ED_NODE_NAME LIKE '%관악%' THEN '관악구'
-        WHEN ROAD_NAME LIKE '%금천%' OR ST_NODE_NAME LIKE '%금천%' OR ED_NODE_NAME LIKE '%금천%' THEN '금천구'
-        WHEN ROAD_NAME LIKE '%구로%' OR ST_NODE_NAME LIKE '%구로%' OR ED_NODE_NAME LIKE '%구로%' THEN '구로구'
-        WHEN ROAD_NAME LIKE '%양천%' OR ST_NODE_NAME LIKE '%양천%' OR ED_NODE_NAME LIKE '%양천%' THEN '양천구'
-        ELSE NULL
-    END                              AS SGG,
-    ROUND(AVG(AVG_SPEED), 1)         AS AVG_SPEED_KMPH,
-    SUM(SUM_PROBE_COUNT)             AS TOTAL_PROBE_COUNT,
-    COUNT(DISTINCT KSLINK_ID)        AS ROAD_LINK_COUNT
-FROM KOREA_TRAFFIC_SPEED__VOLUME_DATA__TMAP_NATIONWIDE_COVERAGE.TRAFFIC.TMAP_TRAFFIC_VOLUME
-GROUP BY 1
-HAVING SGG IS NOT NULL;
-
-SELECT * FROM TMAP_SNAPSHOT ORDER BY TOTAL_PROBE_COUNT DESC;
-
--- 1-8. 카드소비 이사지표 훈련 (가구·가전 + 생활서비스 + 대형마트 합산)
+-- 1-7. 카드소비 이사지표 훈련 (가구·가전 + 생활서비스 + 대형마트 합산)
 -- 훈련 ~2022, 탐지 2023~ (no overlap, CARD_SALES_INFO 2024 미제공)
 CREATE OR REPLACE TABLE card_timeseries_train AS
 WITH sgg_monthly AS (
@@ -454,9 +369,6 @@ CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION card_anomaly_model(
     LABEL_COLNAME     => NULL
 );
 
--- 3-5. TMAP 모델 — 데이터 1개월(MONTHS_AVAILABLE=0)으로 학습 불가, 건너뜀
-
-
 -- ============================================================
 -- STEP 4: 이상 탐지 실행 (3개 모델)
 -- ============================================================
@@ -514,9 +426,6 @@ SELECT * FROM TABLE(
         TARGET_COLNAME    => 'MOVING_CARD_SALES'
     )
 );
-
--- 4-5. TMAP 탐지 — 건너뜀 (데이터 부족)
-
 
 -- ============================================================
 -- VALIDATION 2: 탐지 결과 확인
@@ -748,18 +657,6 @@ WITH top_rental AS (
     FROM RENTAL_TREND_CONTEXT
     WHERE RANK_NUM <= 3
 ),
--- TMAP 스냅샷: 구별 평균 속도 (낮을수록 교통 혼잡 = 이동 활발)
-tmap_ctx AS (
-    SELECT
-        SGG,
-        AVG_SPEED_KMPH,
-        CASE
-            WHEN AVG_SPEED_KMPH < 20 THEN '교통 혼잡'
-            WHEN AVG_SPEED_KMPH < 35 THEN '교통 보통'
-            ELSE '교통 원활'
-        END AS TRAFFIC_STATUS
-    FROM TMAP_SNAPSHOT
-),
 -- 콜센터: 최신 월 기준 상위 카테고리 연결률/전환율
 latest_call AS (
     SELECT
@@ -816,7 +713,6 @@ SELECT
 [경보강도] 4중 동시 이상 (시세·전입인구·통신·카드소비 ALL 경보)
 [시장신호] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile / 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile / 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile / 카드소비 ' || ROUND(r.CARD_PERCENTILE*100,0) || '%ile
 [수요강도] ' || COALESCE(lc.call_context, '전 카테고리 문의 급증') || '
-[교통상황] ' || COALESCE(tm.TRAFFIC_STATUS, '정보 없음') || '
 [인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
 [서비스] 이달 개통 시 렌탈 0원 + 기가 인터넷 결합
 [금지] 설명 문장, 큰따옴표, 부가 설명 금지. 문구만.'
@@ -829,7 +725,6 @@ SELECT
 [경보강도] 상위 ' || ROUND((1 - r.COMBINED_SCORE) * 100, 0) || '% 수준 (시세·전입인구·통신 3중 동시 이상)
 [시장신호] 시세 ' || ROUND(r.PRICE_PERCENTILE*100,0) || '%ile / 전입인구 ' || ROUND(r.POP_PERCENTILE*100,0) || '%ile / 통신개통 ' || ROUND(r.TELECOM_PERCENTILE*100,0) || '%ile
 [수요강도] ' || COALESCE(lc.call_context, '인터넷 문의 급증') || '
-[교통상황] ' || COALESCE(tm.TRAFFIC_STATUS, '정보 없음') || '
 [인기상품] ' || COALESCE(tr.rental_products, '정수기·비데·공기청정기') || ' 중 하나 반드시 언급
 [서비스] 이달 개통 시 렌탈 0원 + 기가 인터넷 결합
 [금지] 설명 문장, 큰따옴표, 부가 설명 금지. 문구만.'
@@ -989,8 +884,7 @@ SELECT
     )['choices'][0]['messages']::VARCHAR    AS MARKETING_COPY
 FROM alert_candidates r
 CROSS JOIN top_rental tr
-CROSS JOIN latest_call lc
-LEFT JOIN tmap_ctx tm ON r.SGG = tm.SGG;
+CROSS JOIN latest_call lc;
 
 -- 결과 확인
 SELECT ALERT_TYPE, COUNT(*) AS cnt FROM MARKETING_ALERTS GROUP BY 1 ORDER BY cnt DESC;
